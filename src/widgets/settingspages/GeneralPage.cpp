@@ -1374,6 +1374,24 @@ void GeneralPage::initLayout(GeneralPageView &layout)
         s.autoCloseThreadPopup)
         ->addTo(layout);
 
+    SettingWidget::checkbox("Display 7TV Paints", s.displaySevenTVPaints)
+        ->addTo(layout);
+    SettingWidget::checkbox("Display 7TV Paint Shadows",
+                            s.displaySevenTVPaintShadows)
+        ->addTo(layout);
+    SettingWidget::checkbox("Use larger 7TV Paint Shadows",
+                            s.largeSevenTVPaintShadows)
+        ->setDescription(
+            "This aims to match the appearance of paints in the browser.")
+        ->addTo(layout);
+    {
+        auto cb = [] {
+            getApp()->getWindows()->invalidateChannelViewBuffers();
+        };
+        s.displaySevenTVPaints.connect(cb, false);
+        s.displaySevenTVPaintShadows.connect(cb, false);
+        s.largeSevenTVPaintShadows.connect(cb, false);
+    }
     SettingWidget::checkbox("Lowercase domains (anti-phishing)",
                             s.lowercaseDomains)
         ->setTooltip(
