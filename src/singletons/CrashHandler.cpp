@@ -18,6 +18,9 @@
 
 #ifdef CHATTERINO_WITH_CRASHPAD
 #    include <QApplication>
+#    include <QDateTime>
+#    include <client/crash_report_database.h>
+#    include <client/settings.h>
 
 #    include <memory>
 #    include <string>
@@ -54,36 +57,72 @@ const QString CRASHPAD_EXECUTABLE_NAME = QStringLiteral("crashpad-handler.exe");
 #endif
 
 const QString RECOVERY_FILE = u"chatterino-recovery.json"_s;
+constexpr const char *CRASH_UPLOAD_URL_ENV = "OPENEMOTE_CRASH_UPLOAD_URL";
+constexpr const char *CRASH_UPLOAD_DEV_ENV = "OPENEMOTE_DEV_CRASH_REPORTS";
+const QString DEFAULT_CRASH_UPLOAD_URL = u"https://openemote.com/crash"_s;
+
+struct RecoverySettings {
+    bool shouldRecover = false;
+    bool shouldUploadCrashReports = false;
+};
+
+QJsonObject readRecoverySettingsObject(const Paths &paths)
+{
+    QFile file(QDir(paths.crashdumpDirectory).filePath(RECOVERY_FILE));
+    if (!file.open(QFile::ReadOnly))
+    {
+        return {};
+    }
+
+    QJsonParseError error{};
+    auto doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject())
+    {
+        qCWarning(chatterinoCrashhandler)
+            << "Failed to parse recovery settings" << error.errorString();
+        return {};
+    }
+
+    return doc.object();
+}
 
 /// The recovery options are saved outside the settings
 /// to be able to read them without loading the settings.
 ///
 /// The flags are saved in the `RECOVERY_FILE` as JSON.
-std::optional<bool> readRecoverySettings(const Paths &paths)
+std::optional<RecoverySettings> readRecoverySettings(const Paths &paths)
 {
-    QFile file(QDir(paths.crashdumpDirectory).filePath(RECOVERY_FILE));
-    if (!file.open(QFile::ReadOnly))
-    {
-        return std::nullopt;
-    }
-
-    QJsonParseError error{};
-    auto doc = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError)
-    {
-        qCWarning(chatterinoCrashhandler)
-            << "Failed to parse recovery settings" << error.errorString();
-        return std::nullopt;
-    }
-
-    const auto obj = doc.object();
-    auto shouldRecover = obj["shouldRecover"_L1];
+    const auto obj = readRecoverySettingsObject(paths);
+    const auto shouldRecover = obj["shouldRecover"_L1];
     if (!shouldRecover.isBool())
     {
         return std::nullopt;
     }
 
-    return shouldRecover.toBool();
+    RecoverySettings settings;
+    settings.shouldRecover = shouldRecover.toBool();
+    settings.shouldUploadCrashReports =
+        obj["shouldUploadCrashReports"_L1].toBool(false);
+    return settings;
+}
+
+bool writeRecoverySettings(const Paths &paths, const RecoverySettings &settings)
+{
+    QFile file(QDir(paths.crashdumpDirectory).filePath(RECOVERY_FILE));
+    if (!file.open(QFile::WriteOnly | QFile::Truncate))
+    {
+        qCWarning(chatterinoCrashhandler)
+            << "Failed to open" << file.fileName();
+        return false;
+    }
+
+    file.write(QJsonDocument(QJsonObject{
+                                 {"shouldRecover"_L1, settings.shouldRecover},
+                                 {"shouldUploadCrashReports"_L1,
+                                  settings.shouldUploadCrashReports},
+                             })
+                   .toJson(QJsonDocument::Compact));
+    return true;
 }
 
 [[maybe_unused]] bool canRestart(const Paths &paths,
@@ -100,7 +139,7 @@ std::optional<bool> readRecoverySettings(const Paths &paths)
     {
         return false;  // default, no settings found
     }
-    return *settings;
+    return settings->shouldRecover;
 #else
     (void)paths;
     return false;
@@ -139,30 +178,119 @@ CrashHandler::CrashHandler(const Paths &paths_)
     auto optSettings = readRecoverySettings(this->paths);
     if (optSettings)
     {
-        this->shouldRecover_ = *optSettings;
+        this->shouldRecover_ = optSettings->shouldRecover;
+        this->shouldUploadCrashReports_ = optSettings->shouldUploadCrashReports;
     }
     else
     {
         // By default, we don't restart after a crash.
         this->saveShouldRecover(false);
+        this->saveShouldUploadCrashReports(false);
+    }
+
+    if (CrashHandler::isCrashUploadForcedInDevMode())
+    {
+        this->shouldUploadCrashReports_ = true;
     }
 }
 
 void CrashHandler::saveShouldRecover(bool value)
 {
     this->shouldRecover_ = value;
+    writeRecoverySettings(this->paths, RecoverySettings{
+                                           .shouldRecover = this->shouldRecover_,
+                                           .shouldUploadCrashReports =
+                                               this->shouldUploadCrashReports_,
+                                       });
+}
 
-    QFile file(QDir(this->paths.crashdumpDirectory).filePath(RECOVERY_FILE));
-    if (!file.open(QFile::WriteOnly | QFile::Truncate))
+void CrashHandler::saveShouldUploadCrashReports(bool value)
+{
+    this->shouldUploadCrashReports_ = value;
+    writeRecoverySettings(this->paths, RecoverySettings{
+                                           .shouldRecover = this->shouldRecover_,
+                                           .shouldUploadCrashReports =
+                                               this->shouldUploadCrashReports_,
+                                       });
+}
+
+bool CrashHandler::isCrashUploadForcedInDevMode()
+{
+#ifndef NDEBUG
+    const auto env = qEnvironmentVariable(CRASH_UPLOAD_DEV_ENV);
+    return env.isEmpty() || env != "0";
+#else
+    return qEnvironmentVariableIntValue(CRASH_UPLOAD_DEV_ENV) == 1;
+#endif
+}
+
+bool CrashHandler::hasCrashUploadUrlOverride()
+{
+    return qEnvironmentVariableIsSet(CRASH_UPLOAD_URL_ENV) &&
+           !qEnvironmentVariable(CRASH_UPLOAD_URL_ENV).trimmed().isEmpty();
+}
+
+bool CrashHandler::shouldUploadCrashReportsAtRuntime(
+    bool persistedUserPreference)
+{
+    if (CrashHandler::isCrashUploadForcedInDevMode())
     {
-        qCWarning(chatterinoCrashhandler)
-            << "Failed to open" << file.fileName();
-        return;
+        return CrashHandler::hasCrashUploadUrlOverride();
     }
-    file.write(QJsonDocument(QJsonObject{
-                                 {"shouldRecover"_L1, value},
-                             })
-                   .toJson(QJsonDocument::Compact));
+    return persistedUserPreference;
+}
+
+QString CrashHandler::crashUploadUrlForRuntime()
+{
+    if (CrashHandler::isCrashUploadForcedInDevMode() &&
+        !CrashHandler::hasCrashUploadUrlOverride())
+    {
+        return QString();
+    }
+    return CrashHandler::crashUploadUrl();
+}
+
+QString CrashHandler::crashUploadUrl()
+{
+    const auto envValue = qEnvironmentVariable(CRASH_UPLOAD_URL_ENV);
+    return envValue.isEmpty() ? DEFAULT_CRASH_UPLOAD_URL : envValue;
+}
+
+bool CrashHandler::loadShouldUploadCrashReports(const Paths &paths)
+{
+    auto settings = readRecoverySettings(paths);
+    return settings ? settings->shouldUploadCrashReports : false;
+}
+
+void CrashHandler::saveShouldUploadCrashReports(const Paths &paths, bool enabled)
+{
+    auto settings = readRecoverySettings(paths).value_or(RecoverySettings{});
+    settings.shouldUploadCrashReports = enabled;
+    writeRecoverySettings(paths, settings);
+}
+
+bool CrashHandler::applyCrashUploadPreference(const Paths &paths, bool enabled)
+{
+#ifdef CHATTERINO_WITH_CRASHPAD
+    auto databaseDir = base::FilePath(nativeString(paths.crashdumpDirectory));
+    auto database = crashpad::CrashReportDatabase::Initialize(databaseDir);
+    if (!database)
+    {
+        return false;
+    }
+
+    auto *settings = database->GetSettings();
+    if (settings == nullptr)
+    {
+        return false;
+    }
+
+    return settings->SetUploadsEnabled(enabled);
+#else
+    (void)paths;
+    (void)enabled;
+    return false;
+#endif
 }
 
 #ifdef CHATTERINO_WITH_CRASHPAD
@@ -196,6 +324,29 @@ std::unique_ptr<crashpad::CrashpadClient> installCrashHandler(
     // > Crash reports are written to this database, and if uploads are enabled,
     //   uploaded from this database to a crash report collection server.
     auto databaseDir = base::FilePath(nativeString(paths.crashdumpDirectory));
+    const auto persistedPref = CrashHandler::loadShouldUploadCrashReports(paths);
+    const auto uploadEnabled =
+        CrashHandler::shouldUploadCrashReportsAtRuntime(persistedPref);
+    const auto uploadUrlQString = CrashHandler::crashUploadUrlForRuntime();
+
+    if (uploadEnabled && !uploadUrlQString.isEmpty())
+    {
+        qCInfo(chatterinoCrashhandler)
+            << "Crash upload mode: enabled,"
+            << "url =" << uploadUrlQString;
+    }
+    else if (CrashHandler::isCrashUploadForcedInDevMode())
+    {
+        qCInfo(chatterinoCrashhandler)
+            << "Crash upload mode: dev-local-only (web upload disabled)";
+    }
+    else
+    {
+        qCInfo(chatterinoCrashhandler)
+            << "Crash upload mode: disabled";
+    }
+
+    CrashHandler::applyCrashUploadPreference(paths, uploadEnabled);
 
     auto client = std::make_unique<crashpad::CrashpadClient>();
 
@@ -216,11 +367,23 @@ std::unique_ptr<crashpad::CrashpadClient> installCrashHandler(
             "exeArguments"s,
             encodeArguments(args),
         },
+        {
+            "openemoteCrashUploadEnabled"s,
+            uploadEnabled ? "true"s : "false"s,
+        },
+        {
+            "openemoteCrashUploadDevLocalOnly"s,
+            (CrashHandler::isCrashUploadForcedInDevMode() &&
+             !CrashHandler::hasCrashUploadUrlOverride())
+                ? "true"s
+                : "false"s,
+        },
     };
 
     // See https://chromium.googlesource.com/crashpad/crashpad/+/HEAD/handler/crashpad_handler.md
     // for documentation on available options.
-    if (!client->StartHandler(handlerPath, databaseDir, {}, {}, {}, annotations,
+    if (!client->StartHandler(handlerPath, databaseDir, {},
+                              uploadUrlQString.toStdString(), {}, annotations,
                               {}, true, false))
     {
         qCDebug(chatterinoCrashhandler) << "Failed to start crashpad handler";

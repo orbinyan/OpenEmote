@@ -1267,6 +1267,24 @@ endif ()
 if (BUILD_WITH_CRASHPAD)
     target_compile_definitions(${LIBRARY_PROJECT} PUBLIC CHATTERINO_WITH_CRASHPAD)
     target_link_libraries(${LIBRARY_PROJECT} PUBLIC crashpad::client)
+    if (TARGET ${EXECUTABLE_PROJECT})
+        if (WIN32 AND TARGET chatterino-crash-handler)
+            add_dependencies(${EXECUTABLE_PROJECT} chatterino-crash-handler)
+        elseif (TARGET crashpad_handler)
+            add_dependencies(${EXECUTABLE_PROJECT} crashpad_handler)
+            if (WIN32)
+                set(CRASHPAD_HANDLER_RUNTIME_NAME "crashpad-handler.exe")
+            else ()
+                set(CRASHPAD_HANDLER_RUNTIME_NAME "crashpad-handler")
+            endif ()
+            add_custom_command(TARGET ${EXECUTABLE_PROJECT} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${EXECUTABLE_PROJECT}>/crashpad"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:crashpad_handler>"
+                    "$<TARGET_FILE_DIR:${EXECUTABLE_PROJECT}>/crashpad/${CRASHPAD_HANDLER_RUNTIME_NAME}"
+            )
+        endif()
+    endif()
 endif()
 
 # Configure compiler warnings

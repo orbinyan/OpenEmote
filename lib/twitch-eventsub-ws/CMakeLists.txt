@@ -33,11 +33,11 @@ include(cmake/GenerateJson.cmake)
 
 add_subdirectory(src)
 
-if(BUILD_TESTS)
+if(BUILD_TESTS AND PROJECT_IS_TOP_LEVEL)
     enable_testing()
     add_subdirectory(tests)
 endif()
 
-if(BUILD_BENCHMARKS)
+if(BUILD_BENCHMARKS AND PROJECT_IS_TOP_LEVEL)
     add_subdirectory(benchmarks)
 endif()

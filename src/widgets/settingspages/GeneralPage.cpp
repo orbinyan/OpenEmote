@@ -1317,6 +1317,28 @@ void GeneralPage::initLayout(GeneralPageView &layout)
         ->setTooltip("When possible, restart Chatterino if the program crashes")
         ->addTo(layout);
 
+    SettingWidget::customCheckbox(
+        "Upload crash reports",
+        getApp()->getCrashHandler()->shouldUploadCrashReports(),
+        [this](bool on) {
+            getApp()->getCrashHandler()->saveShouldUploadCrashReports(on);
+            if (!CrashHandler::applyCrashUploadPreference(getApp()->getPaths(),
+                                                          on))
+            {
+                QMessageBox::warning(
+                    this, "Crash report upload",
+                    "Failed to apply crash report upload preference for this "
+                    "session.");
+            }
+        })
+        ->setTooltip(
+            QString("When enabled, pending and future crash reports are "
+                    "uploaded to %1.\nYou can override this endpoint with "
+                    "OPENEMOTE_CRASH_UPLOAD_URL.\nIn dev mode, uploads stay "
+                    "local unless that override is set.")
+                .arg(CrashHandler::crashUploadUrl()))
+        ->addTo(layout);
+
 #if defined(Q_OS_LINUX) && !defined(NO_QTKEYCHAIN)
     if (!getApp()->getPaths().isPortable())
     {

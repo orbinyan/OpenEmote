@@ -6,9 +6,11 @@
 
 #include "common/Args.hpp"
 #include "common/Version.hpp"  // IWYU pragma: keep
+#include "singletons/CrashHandler.hpp"
 #include "singletons/Paths.hpp"
 #include "util/LayoutCreator.hpp"
 
+#include <QCheckBox>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -57,7 +59,16 @@ LastRunCrashDialog::LastRunCrashDialog(const Args &args, const Paths &paths)
         "<i>You can disable automatic restarts in the settings.</i><br><br>";
 
 #ifdef CHATTERINO_WITH_CRASHPAD
-    auto reportsDir = QDir(paths.crashdumpDirectory).filePath(u"reports"_s);
+    QDir crashDir(paths.crashdumpDirectory);
+    auto reportsDir = paths.crashdumpDirectory;
+    if (crashDir.exists(u"completed"_s))
+    {
+        reportsDir = crashDir.filePath(u"completed"_s);
+    }
+    else if (crashDir.exists(u"reports"_s))
+    {
+        reportsDir = crashDir.filePath(u"reports"_s);
+    }
     text += u"A <b>crash report</b> has been saved to "
             "<a href=\"file:///" %
             reportsDir % u"\">" % reportsDir % u"</a>.<br>";
@@ -75,10 +86,31 @@ LastRunCrashDialog::LastRunCrashDialog(const Args &args, const Paths &paths)
         text += u".<br>"_s;
     }
 
+    if (CrashHandler::isCrashUploadForcedInDevMode())
+    {
+        if (CrashHandler::hasCrashUploadUrlOverride())
+        {
+            text +=
+                "Developer mode is enabled: crash reports are uploaded for "
+                "debugging using the configured override URL.<br>";
+        }
+        else
+        {
+            text +=
+                "Developer mode is enabled: crash reports stay local by "
+                "default (no web upload).<br>";
+        }
+    }
+    else
+    {
+        text +=
+            "Crash reports are stored locally unless you explicitly choose to "
+            "send them.<br>";
+    }
+
     text +=
-        "Crash reports are <b>only stored locally</b> and never uploaded.<br>"
         "<br>Please <a "
-        "href=\"https://github.com/Chatterino/chatterino2/issues/new\">report "
+        "href=\"https://github.com/orbinyan/chatterino-openemote/issues/new\">report "
         "the crash</a> "
         u"so it can be prevented in the future."_s;
 
@@ -96,9 +128,44 @@ LastRunCrashDialog::LastRunCrashDialog(const Args &args, const Paths &paths)
     label->setOpenExternalLinks(true);
     label->setWordWrap(true);
 
+    QCheckBox *alwaysSendFuture = nullptr;
+#ifdef CHATTERINO_WITH_CRASHPAD
+    if (!CrashHandler::isCrashUploadForcedInDevMode())
+    {
+        alwaysSendFuture = layout.emplace<QCheckBox>(
+                               "Always send future crash reports automatically")
+                               .getElement();
+        alwaysSendFuture->setChecked(
+            CrashHandler::loadShouldUploadCrashReports(paths));
+    }
+#endif
+
     layout->addSpacing(16);
 
     auto buttons = layout.emplace<QDialogButtonBox>();
+#ifdef CHATTERINO_WITH_CRASHPAD
+    if (!CrashHandler::isCrashUploadForcedInDevMode())
+    {
+        auto *sendButton =
+            buttons->addButton(u"Send crash report"_s, QDialogButtonBox::YesRole);
+        QObject::connect(sendButton, &QPushButton::clicked, [this, paths,
+                                                             alwaysSendFuture] {
+            const bool keepEnabled =
+                alwaysSendFuture != nullptr && alwaysSendFuture->isChecked();
+            const auto enabledForNow = CrashHandler::applyCrashUploadPreference(
+                paths, true);
+            if (!enabledForNow)
+            {
+                QMessageBox::warning(
+                    this, "Crash report upload",
+                    "Failed to enable crash report upload in this session.");
+            }
+            CrashHandler::saveShouldUploadCrashReports(paths, keepEnabled);
+
+            this->accept();
+        });
+    }
+#endif
 
     auto *okButton = buttons->addButton(u"Ok"_s, QDialogButtonBox::AcceptRole);
     QObject::connect(okButton, &QPushButton::clicked, [this] {

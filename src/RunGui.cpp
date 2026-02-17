@@ -210,10 +210,11 @@ void clearCache(const QDir &dir)
 // improved in the future.
 void clearCrashes(QDir dir)
 {
-    // crashpad crashdumps are stored inside the Crashes/report directory
-    if (!dir.cd("reports"))
+    // crashpad crashdumps are typically stored inside Crashes/completed.
+    // Older layouts may use Crashes/reports.
+    if (!dir.cd("completed") && !dir.cd("reports"))
     {
-        // no reports directory exists = no files to delete
+        // no known reports directory exists = no files to delete
         return;
     }
 
@@ -246,12 +247,10 @@ void runGui(QApplication &a, const Paths &paths, Settings &settings,
     initResources();
     initSignalHandler();
 
-#ifdef Q_OS_WIN
     if (args.crashRecovery)
     {
         showLastCrashDialog(args, paths);
     }
-#endif
 
     selfcheck::checkWebp();
 
