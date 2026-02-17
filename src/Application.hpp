@@ -64,6 +64,9 @@ namespace eventsub {
 class IController;
 }  // namespace eventsub
 class SpellChecker;
+namespace platform {
+class PlatformRegistry;
+}  // namespace platform
 
 class IApplication
 {
@@ -149,6 +152,7 @@ public:
     void stop();
 
     int run();
+    platform::PlatformRegistry *getPlatforms();
 
     friend void test();
 
@@ -188,6 +192,7 @@ private:
     std::unique_ptr<ITwitchUsers> twitchUsers;
     std::unique_ptr<pronouns::Pronouns> pronouns;
     std::unique_ptr<SpellChecker> spellChecker;
+    std::unique_ptr<platform::PlatformRegistry> platforms;
 #ifdef CHATTERINO_HAVE_PLUGINS
     std::unique_ptr<PluginController> plugins;
 #endif

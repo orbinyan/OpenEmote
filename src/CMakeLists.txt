@@ -369,6 +369,13 @@ set(SOURCE_FILES
         providers/IvrApi.hpp
         providers/NetworkConfigurationProvider.cpp
         providers/NetworkConfigurationProvider.hpp
+        providers/platform/KickPlatformAdapter.cpp
+        providers/platform/KickPlatformAdapter.hpp
+        providers/platform/PlatformAdapter.hpp
+        providers/platform/PlatformRegistry.cpp
+        providers/platform/PlatformRegistry.hpp
+        providers/platform/TwitchPlatformAdapter.cpp
+        providers/platform/TwitchPlatformAdapter.hpp
 
         providers/bttv/BttvBadges.cpp
         providers/bttv/BttvBadges.hpp

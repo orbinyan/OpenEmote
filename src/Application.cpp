@@ -20,6 +20,9 @@
 #include "providers/bttv/BttvEmotes.hpp"
 #include "providers/ffz/FfzEmotes.hpp"
 #include "providers/links/LinkResolver.hpp"
+#include "providers/platform/KickPlatformAdapter.hpp"
+#include "providers/platform/PlatformRegistry.hpp"
+#include "providers/platform/TwitchPlatformAdapter.hpp"
 #include "providers/pronouns/Pronouns.hpp"
 #include "providers/seventv/SeventvAPI.hpp"
 #include "providers/seventv/SeventvEmotes.hpp"
@@ -204,6 +207,7 @@ Application::Application(Settings &_settings, const Paths &paths,
     , twitchUsers(new TwitchUsers)
     , pronouns(new pronouns::Pronouns)
     , spellChecker(new SpellChecker)
+    , platforms(new platform::PlatformRegistry)
 #ifdef CHATTERINO_HAVE_PLUGINS
     , plugins(new PluginController(paths))
 #endif
@@ -301,6 +305,12 @@ void Application::initialize(Settings &settings, const Paths &paths)
     this->twitch->initEventAPIs(this->bttvLiveUpdates.get(),
                                 this->seventvEventAPI.get());
 
+    this->platforms->registerAdapter(
+        std::make_unique<platform::TwitchPlatformAdapter>());
+    this->platforms->registerAdapter(
+        std::make_unique<platform::KickPlatformAdapter>());
+    this->platforms->initializeAll();
+
     this->streamerMode->start();
 
     this->initialized = true;
@@ -311,6 +321,7 @@ int Application::run()
     assert(this->initialized);
 
     this->twitch->connect();
+    this->platforms->connectAll();
 
     if (!this->args_.isFramelessEmbed)
     {
@@ -334,6 +345,14 @@ int Application::run()
         false);
 
     return QApplication::exec();
+}
+
+platform::PlatformRegistry *Application::getPlatforms()
+{
+    assertInGuiThread();
+    assert(this->platforms);
+
+    return this->platforms.get();
 }
 
 Theme *Application::getThemes()
@@ -626,6 +645,7 @@ void Application::aboutToQuit()
 {
     ABOUT_TO_QUIT.store(true);
 
+    this->platforms->aboutToQuitAll();
     this->eventSub->setQuitting();
 
     this->twitch->aboutToQuit();
@@ -641,6 +661,7 @@ void Application::stop()
 #ifdef CHATTERINO_HAVE_PLUGINS
     this->plugins.reset();
 #endif
+    this->platforms.reset();
     this->pronouns.reset();
     this->twitchUsers.reset();
     this->streamerMode.reset();
