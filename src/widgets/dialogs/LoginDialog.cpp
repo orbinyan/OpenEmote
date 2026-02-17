@@ -29,6 +29,25 @@ namespace chatterino {
 
 namespace {
 
+QString resolveLoginLink()
+{
+    // OpenEmote override (preferred), then generic override.
+    auto openEmoteLink =
+        qEnvironmentVariable("CHATTERINO_OPENEMOTE_LOGIN_URL");
+    if (!openEmoteLink.isEmpty())
+    {
+        return openEmoteLink;
+    }
+
+    auto loginLink = qEnvironmentVariable("CHATTERINO_LOGIN_URL");
+    if (!loginLink.isEmpty())
+    {
+        return loginLink;
+    }
+
+    return "https://chatterino.com/client_login";
+}
+
 bool logInWithCredentials(QWidget *parent, const QString &userID,
                           const QString &username, const QString &clientID,
                           const QString &oauthToken)
@@ -79,10 +98,10 @@ bool logInWithCredentials(QWidget *parent, const QString &userID,
 
 BasicLoginWidget::BasicLoginWidget()
 {
-    const QString logInLink = "https://chatterino.com/client_login";
+    const QString logInLink = resolveLoginLink();
     this->setLayout(&this->ui_.layout);
 
-    this->ui_.loginButton.setText("Log in (Opens in browser)");
+    this->ui_.loginButton.setText("Log in with Twitch (Opens in browser)");
     this->ui_.pasteCodeButton.setText("Paste login info");
     this->ui_.unableToOpenBrowserHelper.setWindowTitle(
         "Chatterino - unable to open in browser");
