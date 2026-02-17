@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openemote.app/schemas/openemote-pack-v1.schema.json",
+  "title": "OpenEmote Pack Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pack_id",
+    "name",
+    "version",
+    "updated_at",
+    "emotes"
+  ],
+  "properties": {
+    "pack_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "license": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "homepage_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "support_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "emotes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200000,
+      "items": {
+        "$ref": "#/$defs/emote"
+      }
+    },
+    "aliases": {
+      "type": "array",
+      "maxItems": 200000,
+      "items": {
+        "$ref": "#/$defs/alias"
+      }
+    },
+    "badges": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/badge"
+      }
+    },
+    "paints": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/paint"
+      }
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "safe_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\s].*[^\\s]$|^[^\\s]$"
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9._-]+$"
+    },
+    "flags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zero_width": {
+          "type": "boolean",
+          "default": false
+        },
+        "animated": {
+          "type": "boolean",
+          "default": false
+        },
+        "modifier": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scale",
+        "url",
+        "width",
+        "height",
+        "mime"
+      ],
+      "properties": {
+        "scale": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri-reference",
+          "maxLength": 2048
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "mime": {
+          "type": "string",
+          "enum": [
+            "image/webp",
+            "image/png",
+            "image/gif",
+            "image/avif"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "modifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targets",
+        "transforms"
+      ],
+      "properties": {
+        "targets": {
+          "type": "string",
+          "enum": [
+            "any",
+            "emote",
+            "emoji"
+          ]
+        },
+        "transforms": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string",
+            "enum": [
+              "flip_x",
+              "flip_y",
+              "rotate_90",
+              "rotate_180",
+              "rotate_270",
+              "invert",
+              "tint"
+            ]
+          }
+        },
+        "tint_default": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+        }
+      }
+    },
+    "emote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "images"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9._:-]+$"
+        },
+        "name": {
+          "$ref": "#/$defs/safe_name"
+        },
+        "owner_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/tag"
+          }
+        },
+        "flags": {
+          "$ref": "#/$defs/flags"
+        },
+        "modifier": {
+          "$ref": "#/$defs/modifier"
+        },
+        "images": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/image"
+          }
+        }
+      }
+    },
+    "alias": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "alias",
+        "target_id"
+      ],
+      "properties": {
+        "alias": {
+          "$ref": "#/$defs/safe_name"
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "global",
+            "channel",
+            "user"
+          ],
+          "default": "global"
+        }
+      }
+    },
+    "badge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "images"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "$ref": "#/$defs/safe_name"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "images": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/image"
+          }
+        }
+      }
+    },
+    "paint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "stops"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "$ref": "#/$defs/safe_name"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "linear_gradient",
+            "radial_gradient",
+            "solid"
+          ]
+        },
+        "angle": {
+          "type": "number"
+        },
+        "stops": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "at",
+              "color"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+              }
+            }
+          }
+        },
+        "shadow": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "blur": {
+              "type": "number",
+              "minimum": 0
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "ed25519"
+          ]
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      }
+    }
+  }
+}
