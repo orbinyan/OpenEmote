@@ -1,79 +1,118 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-active_repo="/home/jack/src/golden_eye/.overmind/external/chatterino-openemote"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [[ "${OPENEMOTE_LANE_QUARANTINE_BYPASS:-0}" != "1" ]]; then
-  cat <<EOF >&2
-[openemote-lane] Quarantined worktree blocked.
-[openemote-lane] This path is disabled to prevent stale launches:
-  ${repo_root}
-[openemote-lane] Use active path instead:
-  ${active_repo}
-[openemote-lane] To bypass intentionally (emergency only), set:
-  OPENEMOTE_LANE_QUARANTINE_BYPASS=1
-EOF
-  exit 42
-fi
+BUILD_DIRS=(
+  "${OPENEMOTE_BUILD_DIR:-}"
+  "${ROOT}/build/release"
+  "${ROOT}/build/debug"
+  "${ROOT}/build"
+  "${ROOT}/build-crashpad"
+)
 
-build_dir="${repo_root}/build-crashpad"
-cache_file="${build_dir}/CMakeCache.txt"
+find_binary() {
+  local dir
+  local openemote_bin
+  local chatterino_bin
 
-if [[ ! -f "${cache_file}" ]]; then
-  echo "Missing CMake cache: ${cache_file}" >&2
-  exit 1
-fi
+  for dir in "${BUILD_DIRS[@]}"; do
+    [[ -n "${dir}" ]] || continue
 
-cache_path() {
-  local key="$1"
-  sed -n "s#^${key}:PATH=##p" "${cache_file}" | head -n 1
+    openemote_bin="${dir}/bin/openemote"
+    chatterino_bin="${dir}/bin/chatterino"
+
+    if [[ -x "${openemote_bin}" && -x "${chatterino_bin}" ]]; then
+      if [[ "${chatterino_bin}" -nt "${openemote_bin}" ]]; then
+        printf '%s\n' "${chatterino_bin}"
+      else
+        printf '%s\n' "${openemote_bin}"
+      fi
+      return 0
+    fi
+
+    if [[ -x "${openemote_bin}" ]]; then
+      printf '%s\n' "${openemote_bin}"
+      return 0
+    fi
+
+    if [[ -x "${chatterino_bin}" ]]; then
+      printf '%s\n' "${chatterino_bin}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
-cache_internal() {
-  local key="$1"
-  sed -n "s#^${key}:INTERNAL=##p" "${cache_file}" | head -n 1
+find_test_binary() {
+  local dir
+  local test_bin
+
+  for dir in "${BUILD_DIRS[@]}"; do
+    [[ -n "${dir}" ]] || continue
+    test_bin="${dir}/bin/chatterino-test"
+    if [[ -x "${test_bin}" ]]; then
+      printf '%s\n' "${test_bin}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
-qt_dir="$(cache_path Qt6_DIR)"
-boost_headers_dir="$(cache_path boost_headers_DIR)"
-curl_include="$(cache_path CURL_INCLUDE_DIR)"
-openssl_include="$(cache_path OPENSSL_INCLUDE_DIR)"
-cmake_bin="$(cache_internal CMAKE_COMMAND)"
+build_cmd() {
+  if command -v nix >/dev/null 2>&1; then
+    nix --extra-experimental-features 'nix-command flakes' develop -c cmake --preset release
+    nix --extra-experimental-features 'nix-command flakes' develop -c cmake --build --preset release -j"$(nproc)"
+    return 0
+  fi
+  cmake --preset release
+  cmake --build --preset release -j"$(nproc)"
+}
 
-qt_prefix="${qt_dir%/lib/cmake/Qt6}"
-boost_prefix="${boost_headers_dir%/lib/cmake/boost_headers-1.81.0}"
-extra_include="${qt_prefix}/include:${boost_prefix}/include:${curl_include}:${openssl_include}"
-
-export CPLUS_INCLUDE_PATH="${extra_include}${CPLUS_INCLUDE_PATH:+:${CPLUS_INCLUDE_PATH}}"
-export C_INCLUDE_PATH="${extra_include}${C_INCLUDE_PATH:+:${C_INCLUDE_PATH}}"
-
-cmd="${1:-}"
-shift || true
+cmd="${1:-run}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
 
 case "${cmd}" in
   build)
-    targets=("$@")
-    if [[ ${#targets[@]} -eq 0 ]]; then
-      targets=(chatterino)
-    fi
-    exec "${cmake_bin}" --build "${build_dir}" --target "${targets[@]}" -j8
+    build_cmd
     ;;
   run)
-    exec "${build_dir}/bin/chatterino" "$@"
+    BIN_PATH="$(find_binary || true)"
+    if [[ -z "${BIN_PATH}" ]]; then
+      echo "[openemote] missing binary" >&2
+      echo "Run scripts/openemote-dev.sh build first." >&2
+      exit 1
+    fi
+    if [[ "${OPENEMOTE_VERBOSE:-0}" != "0" ]]; then
+      repo_branch="$(git -C "${ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+      repo_rev="$(git -C "${ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+      echo "[openemote] repo: ${ROOT} (${repo_branch}/${repo_rev})"
+      echo "[openemote] exec path: ${BIN_PATH}"
+      echo "[openemote] version: $(${BIN_PATH} --version 2>/dev/null || echo unknown)"
+    fi
+    exec "${BIN_PATH}" "$@"
     ;;
   test)
-    exec "${build_dir}/bin/chatterino-test" "$@"
+    TEST_PATH="$(find_test_binary || true)"
+    if [[ -z "${TEST_PATH}" ]]; then
+      echo "[openemote] missing test binary (chatterino-test)" >&2
+      echo "Run scripts/openemote-dev.sh build first." >&2
+      exit 1
+    fi
+    exec "${TEST_PATH}" "$@"
     ;;
   env)
-    printf 'CMAKE=%s\n' "${cmake_bin}"
-    printf 'CPLUS_INCLUDE_PATH=%s\n' "${CPLUS_INCLUDE_PATH}"
-    printf 'C_INCLUDE_PATH=%s\n' "${C_INCLUDE_PATH}"
+    printf 'ROOT=%s\n' "${ROOT}"
+    printf 'BUILD_DIRS=%s\n' "${BUILD_DIRS[*]}"
     ;;
   *)
     cat <<'USAGE'
 Usage:
-  scripts/openemote-dev.sh build [target...]
+  scripts/openemote-dev.sh build
   scripts/openemote-dev.sh run [args...]
   scripts/openemote-dev.sh test [gtest args...]
   scripts/openemote-dev.sh env
@@ -81,3 +120,4 @@ USAGE
     exit 2
     ;;
 esac
+

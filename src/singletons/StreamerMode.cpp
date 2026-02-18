@@ -233,7 +233,7 @@ void StreamerMode::start()
 
 StreamerModePrivate::StreamerModePrivate(StreamerMode *parent)
     : parent_(parent)
-    , timer_(new QTimer(&this->thread_))
+    , timer_(new QTimer)
 {
     this->thread_.setObjectName("StreamerMode");
     this->timer_->moveToThread(&this->thread_);
@@ -269,8 +269,18 @@ void StreamerModePrivate::start()
 
 StreamerModePrivate::~StreamerModePrivate()
 {
-    this->timer_->deleteLater();
-    this->timer_ = nullptr;
+    if (this->timer_ != nullptr)
+    {
+        QMetaObject::invokeMethod(
+            this->timer_,
+            [timer = this->timer_] {
+                timer->stop();
+                timer->deleteLater();
+            },
+            Qt::BlockingQueuedConnection);
+        this->timer_ = nullptr;
+    }
+
     this->thread_.quit();
     if (!this->thread_.wait(500))
     {

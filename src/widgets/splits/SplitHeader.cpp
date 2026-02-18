@@ -430,7 +430,7 @@ std::unique_ptr<QMenu> SplitHeader::createMainMenu()
         h->getDisplaySequence(HotkeyCategory::Window, "popup", {{"split"}}),
         this->split_, &Split::popup);
     menu->addAction(
-        "Popup overlay",
+        "Gaming overlay popout",
         h->getDisplaySequence(HotkeyCategory::Split, "popupOverlay"),
         this->split_, &Split::showOverlayWindow);
     menu->addAction("Search",
@@ -920,7 +920,7 @@ void SplitHeader::updateChannelText()
                 this->lastThumbnail_.restart();
             }
             this->tooltipText_ = formatTooltip(*streamStatus, this->thumbnail_);
-            title += formatTitle(*streamStatus, *getSettings());
+            title += " (live)";
         }
         else
         {

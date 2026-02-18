@@ -181,9 +181,7 @@ boost::json::result_for<Event, boost::json::value>::type tag_invoke(
         EVENTSUB_BAIL_HERE(error::Kind::FieldMissing);
     }
 
-    auto bannedAt =
-        boost::json::try_value_to<std::chrono::system_clock::time_point>(
-            *jvbannedAt, AsISO8601());
+    auto bannedAt = try_value_to_iso8601(*jvbannedAt);
 
     if (bannedAt.has_error())
     {
@@ -197,9 +195,7 @@ boost::json::result_for<Event, boost::json::value>::type tag_invoke(
     const auto *jvendsAt = root.if_contains("ends_at");
     if (jvendsAt != nullptr && !jvendsAt->is_null())
     {
-        auto tendsAt =
-            boost::json::try_value_to<std::chrono::system_clock::time_point>(
-                *jvendsAt, AsISO8601());
+        auto tendsAt = try_value_to_iso8601(*jvendsAt);
 
         if (tendsAt.has_error())
         {

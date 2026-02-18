@@ -49,6 +49,8 @@ private:
     void installEvents();
     void updateUserData();
     void updateLatestMessages();
+    void updateHeaderBadges();
+    void updateAvatarModelSummary();
     void updateNotes();
 
     void loadAvatar(const QUrl &url);
@@ -84,6 +86,8 @@ private:
 
         Label *nameLabel = nullptr;
         Label *localizedNameLabel = nullptr;
+        Label *badgesLabel = nullptr;
+        Label *avatarModelLabel = nullptr;
         Label *pronounsLabel = nullptr;
         Label *followerCountLabel = nullptr;
         Label *createdDateLabel = nullptr;

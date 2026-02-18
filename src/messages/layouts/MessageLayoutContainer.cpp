@@ -710,6 +710,22 @@ void MessageLayoutContainer::addElement(MessageLayoutElement *element,
         }
     }
 
+    const bool shouldRightClampTimestamp =
+        element->getFlags().has(MessageElementFlag::Timestamp) &&
+        !isRTLAdjusting;
+    if (shouldRightClampTimestamp)
+    {
+        const qreal contentWidth =
+            this->width_ - int(MARGIN.left() * this->scale_) -
+            int(MARGIN.right() * this->scale_) -
+            (static_cast<int>(this->line_ + 1) == maxUncollapsedLines()
+                 ? this->dotdotdotWidth_
+                 : 0);
+        const qreal targetX =
+            std::max(this->currentX_, contentWidth - element->getRect().width());
+        this->currentX_ = targetX;
+    }
+
     if (isRTLAdjusting)
     {
         // shift by width since we are calculating according to top right in RTL mode

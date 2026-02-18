@@ -802,8 +802,12 @@ void Notebook::performHorizontalLayout(const LayoutContext &ctx, bool animated)
     auto x = ctx.left;
     auto y = isBottom ? ctx.bottom - ctx.tabHeight - ctx.tabSpacer : 0;
     auto consumedButtonHeights = 0;
+    const auto visibleButtons = static_cast<int>(this->visibleButtonCount());
+    const auto reservedRightSpace = visibleButtons * ctx.buttonWidth;
+    const auto tabsRightEdge = this->width() - reservedRightSpace;
 
-    // set size of custom buttons (settings, user, ...)
+    // set size of custom buttons (settings, user, ...) on the right edge
+    auto buttonX = tabsRightEdge;
     for (auto *btn : this->customButtons_)
     {
         // We use isHidden here since the layout can happen when the button has
@@ -814,8 +818,8 @@ void Notebook::performHorizontalLayout(const LayoutContext &ctx, bool animated)
         }
 
         btn->setFixedSize(ctx.buttonWidth, ctx.buttonHeight);
-        btn->move(x, y);
-        x += ctx.buttonWidth;
+        btn->move(buttonX, y);
+        buttonX += ctx.buttonWidth;
 
         consumedButtonHeights = ctx.tabHeight;
     }
@@ -834,7 +838,7 @@ void Notebook::performHorizontalLayout(const LayoutContext &ctx, bool animated)
             auto isLast = &item == &ctx.items.back();
 
             auto fitsInLine = ((isLast ? ctx.addButtonWidth : 0) + x +
-                               item.tab->width()) <= this->width();
+                               item.tab->width()) <= tabsRightEdge;
 
             if (!isFirst && !fitsInLine)
             {
@@ -1462,41 +1466,6 @@ void SplitNotebook::showEvent(QShowEvent * /*event*/)
 
 void SplitNotebook::addCustomButtons()
 {
-    // settings
-    auto *settingsBtn = this->addCustomButton<SvgButton>(SvgButton::Src{
-        .dark = ":/buttons/settings-darkMode.svg",
-        .light = ":/buttons/settings-lightMode.svg",
-    });
-
-    settingsBtn->setPadding({0, 0});
-
-    // This is to ensure you can't lock yourself out of the settings
-    if (getApp()->getArgs().safeMode)
-    {
-        settingsBtn->setVisible(true);
-    }
-    else
-    {
-        settingsBtn->setVisible(
-            !getSettings()->hidePreferencesButton.getValue());
-
-        getSettings()->hidePreferencesButton.connect(
-            [this, settingsBtn](bool hide) {
-                auto oldVisibility = settingsBtn->isVisible();
-                auto newVisibility = !hide;
-                settingsBtn->setVisible(newVisibility);
-                if (oldVisibility != newVisibility)
-                {
-                    this->performLayout();
-                }
-            },
-            this->signalHolder_, false);
-    }
-
-    QObject::connect(settingsBtn, &Button::leftClicked, [this] {
-        getApp()->getWindows()->showSettingsDialog(this);
-    });
-
     // account
     auto *userBtn = this->addCustomButton<SvgButton>(SvgButton::Src{
         .dark = ":/buttons/account-darkMode.svg",
@@ -1542,6 +1511,41 @@ void SplitNotebook::addCustomButtons()
     QObject::connect(getApp()->getStreamerMode(), &IStreamerMode::changed, this,
                      &SplitNotebook::updateStreamerModeIcon);
     this->updateStreamerModeIcon();
+
+    // settings (added last to keep it on the right edge)
+    auto *settingsBtn = this->addCustomButton<SvgButton>(SvgButton::Src{
+        .dark = ":/buttons/settings-darkMode.svg",
+        .light = ":/buttons/settings-lightMode.svg",
+    });
+
+    settingsBtn->setPadding({0, 0});
+
+    // This is to ensure you can't lock yourself out of the settings
+    if (getApp()->getArgs().safeMode)
+    {
+        settingsBtn->setVisible(true);
+    }
+    else
+    {
+        settingsBtn->setVisible(
+            !getSettings()->hidePreferencesButton.getValue());
+
+        getSettings()->hidePreferencesButton.connect(
+            [this, settingsBtn](bool hide) {
+                auto oldVisibility = settingsBtn->isVisible();
+                auto newVisibility = !hide;
+                settingsBtn->setVisible(newVisibility);
+                if (oldVisibility != newVisibility)
+                {
+                    this->performLayout();
+                }
+            },
+            this->signalHolder_, false);
+    }
+
+    QObject::connect(settingsBtn, &Button::leftClicked, [this] {
+        getApp()->getWindows()->showSettingsDialog(this);
+    });
 
     this->performLayout(false);
 }

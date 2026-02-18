@@ -32,8 +32,10 @@ public:
         QVBoxLayout layout;
         QHBoxLayout horizontalLayout;
         QPushButton loginButton;
+        QPushButton secureHandoffButton;
         QPushButton pasteCodeButton;
         QLabel unableToOpenBrowserHelper;
+        QLabel secureHandoffHelper;
     } ui_;
 };
 

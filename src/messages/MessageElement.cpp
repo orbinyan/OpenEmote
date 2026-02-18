@@ -155,11 +155,14 @@ std::string_view ImageElement::type() const
 
 CircularImageElement::CircularImageElement(ImagePtr image, int padding,
                                            QColor background,
-                                           MessageElementFlags flags)
+                                           MessageElementFlags flags,
+                                           std::vector<std::pair<QString, QColor>>
+                                               cornerBadges)
     : MessageElement(flags)
     , image_(std::move(image))
     , padding_(padding)
     , background_(background)
+    , cornerBadges_(std::move(cornerBadges))
 {
 }
 
@@ -172,7 +175,8 @@ void CircularImageElement::addToContainer(MessageLayoutContainer &container,
                        container.getScale();
 
         container.addElement(new ImageWithCircleBackgroundLayoutElement(
-            *this, this->image_, imgSize, this->background_, this->padding_));
+            *this, this->image_, imgSize, this->background_, this->padding_,
+            this->cornerBadges_));
     }
 }
 
@@ -194,10 +198,12 @@ std::string_view CircularImageElement::type() const
 
 // EMOTE
 EmoteElement::EmoteElement(const EmotePtr &emote, MessageElementFlags flags,
-                           const MessageColor &textElementColor)
+                           const MessageColor &textElementColor,
+                           float emoteScaleMultiplier)
     : MessageElement(flags)
     , textColor_(textElementColor)
     , emote_(emote)
+    , emoteScaleMultiplier_(emoteScaleMultiplier)
 {
     this->setTooltip(emote->tooltip.string);
 }
@@ -226,9 +232,22 @@ void EmoteElement::addToContainer(MessageLayoutContainer &container,
         }
         else
         {
-            auto emoteScale = getSettings()->emoteScale.getValue();
+            auto emoteScale =
+                getSettings()->emoteScale.getValue() * this->emoteScaleMultiplier_;
 
             auto size = image->size() * container.getScale() * emoteScale;
+            if (getSettings()->openEmoteMaxRowHeightEnabled.getValue())
+            {
+                const int rowCapPx =
+                    qBound(18, getSettings()->openEmoteMaxRowHeight.getValue(),
+                           200);
+                const qreal rowCap = rowCapPx * container.getScale();
+                if (size.height() > rowCap && size.height() > 0)
+                {
+                    const qreal factor = rowCap / size.height();
+                    size = QSizeF(size.width() * factor, rowCap);
+                }
+            }
 
             container.addElement(this->makeImageLayoutElement(image, size));
             return;
@@ -287,10 +306,11 @@ std::string_view EmoteElement::type() const
 
 LayeredEmoteElement::LayeredEmoteElement(
     std::vector<LayeredEmoteElement::Emote> &&emotes, MessageElementFlags flags,
-    const MessageColor &textElementColor)
+    const MessageColor &textElementColor, float emoteScaleMultiplier)
     : MessageElement(flags)
     , emotes_(std::move(emotes))
     , textElementColor_(textElementColor)
+    , emoteScaleMultiplier_(emoteScaleMultiplier)
 {
     this->updateTooltips();
 }
@@ -314,7 +334,8 @@ void LayeredEmoteElement::addToContainer(MessageLayoutContainer &container,
                 return;
             }
 
-            auto emoteScale = getSettings()->emoteScale.getValue();
+            auto emoteScale =
+                getSettings()->emoteScale.getValue() * this->emoteScaleMultiplier_;
             float overallScale = emoteScale * container.getScale();
 
             auto largestSize = getBoundingBoxSize(images) * overallScale;
@@ -1184,6 +1205,7 @@ TextElement *TimestampElement::formatTime(const QTime &time)
     auto *text =
         new TextElement(format, MessageElementFlag::Timestamp,
                         MessageColor::System, FontStyle::TimestampMedium);
+    text->setTrailingSpace(false);
     text->setLink(this->getLink());
     text->setTooltip(this->getTooltip());
     return text;
@@ -1357,6 +1379,42 @@ QJsonObject ReplyCurveElement::toJson() const
 }
 
 std::string_view ReplyCurveElement::type() const
+{
+    return std::remove_pointer_t<decltype(this)>::TYPE;
+}
+
+FixedSpaceElement::FixedSpaceElement(float width, float height,
+                                     MessageElementFlags flags)
+    : MessageElement(flags)
+    , width_(std::max(0.F, width))
+    , height_(std::max(0.F, height))
+{
+    this->setTrailingSpace(false);
+}
+
+void FixedSpaceElement::addToContainer(MessageLayoutContainer &container,
+                                       const MessageLayoutContext &ctx)
+{
+    if (ctx.flags.hasAny(this->getFlags()))
+    {
+        container.addElement(new ImageLayoutElement(
+            *this, nullptr,
+            QSizeF(this->width_ * container.getScale(),
+                   this->height_ * container.getScale())));
+    }
+}
+
+QJsonObject FixedSpaceElement::toJson() const
+{
+    auto base = MessageElement::toJson();
+    base["type"_L1] = u"FixedSpaceElement"_s;
+    base["width"_L1] = this->width_;
+    base["height"_L1] = this->height_;
+
+    return base;
+}
+
+std::string_view FixedSpaceElement::type() const
 {
     return std::remove_pointer_t<decltype(this)>::TYPE;
 }

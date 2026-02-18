@@ -212,20 +212,33 @@ void SmartTabEmoteStrategy::apply(const std::vector<EmoteItem> &items,
 {
     qCDebug(LOG) << "SmartTabEmoteStrategy apply" << query;
     bool colonStart = query.startsWith(':');
+    bool zeroWidthOnly = false;
+    std::vector<EmoteItem> filteredItems = items;
     QStringView normalizedQuery = query;
     if (colonStart)
     {
         // TODO(Qt6): use sliced
         normalizedQuery = normalizedQuery.mid(1);
     }
+    if (normalizedQuery.startsWith('~'))
+    {
+        normalizedQuery = normalizedQuery.mid(1);
+        zeroWidthOnly = true;
+
+        auto [first, last] = std::ranges::remove_if(
+            filteredItems, [](const EmoteItem &emoteItem) {
+                return !emoteItem.emote->zeroWidth;
+            });
+        filteredItems.erase(first, last);
+    }
 
     completeEmotes(
-        items, output, normalizedQuery, false, false,
+        filteredItems, output, normalizedQuery, false, zeroWidthOnly,
         [&](const EmoteItem &item, Qt::CaseSensitivity caseHandling) -> bool {
             QStringView itemQuery;
             if (item.isEmoji)
             {
-                if (colonStart)
+                if (colonStart && !zeroWidthOnly)
                 {
                     itemQuery = normalizedQuery;
                 }
@@ -236,7 +249,7 @@ void SmartTabEmoteStrategy::apply(const std::vector<EmoteItem> &items,
             }
             else
             {
-                itemQuery = query;
+                itemQuery = zeroWidthOnly ? normalizedQuery : query;
             }
 
             return startsWithOrContains(

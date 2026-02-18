@@ -31,20 +31,12 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMessageBox>
 #include <QSaveFile>
 #include <QScreen>
 
 #include <chrono>
-#include <optional>
 
 namespace {
-
-std::optional<bool> &shouldMoveOutOfBoundsWindow()
-{
-    static std::optional<bool> x;
-    return x;
-}
 
 void closeWindowsRecursive(QWidget *window)
 {
@@ -863,35 +855,30 @@ void WindowManager::applyWindowLayout(const WindowLayout &layout)
 
         // get geometry
         {
-            // out of bounds windows
-            auto screens = QApplication::screens();
-            bool outOfBounds =
-                !qEnvironmentVariableIsSet("I3SOCK") &&
-                std::none_of(screens.begin(), screens.end(),
-                             [&](QScreen *screen) {
-                                 return screen->availableGeometry().intersects(
-                                     windowData.geometry_);
-                             });
-
-            // ask if move into bounds
-            auto &&should = shouldMoveOutOfBoundsWindow();
-            if (outOfBounds && !should)
-            {
-                should =
-                    QMessageBox(QMessageBox::Icon::Warning,
-                                "Windows out of bounds",
-                                "Some windows were detected out of bounds. "
-                                "Should they be moved into bounds?",
-                                QMessageBox::Yes | QMessageBox::No)
-                        .exec() == QMessageBox::Yes;
-            }
-
-            if ((!outOfBounds || !should.value()) &&
+            const bool hasSavedGeometry =
                 windowData.geometry_.x() != -1 &&
                 windowData.geometry_.y() != -1 &&
                 windowData.geometry_.width() != -1 &&
-                windowData.geometry_.height() != -1)
+                windowData.geometry_.height() != -1;
+
+            // Keep startup deterministic: auto-recover out-of-bounds windows
+            // into the nearest visible screen instead of showing another modal
+            // dialog during launch.
+            if (hasSavedGeometry)
             {
+                auto screens = QApplication::screens();
+                const bool outOfBounds =
+                    !qEnvironmentVariableIsSet("I3SOCK") &&
+                    std::none_of(screens.begin(), screens.end(),
+                                 [&](QScreen *screen) {
+                                     return screen->availableGeometry().intersects(
+                                         windowData.geometry_);
+                                 });
+
+                const auto boundsMode =
+                    outOfBounds ? widgets::BoundsChecking::DesiredPosition
+                                : widgets::BoundsChecking::Off;
+
                 // Have to offset x by one because qt moves the window 1px too
                 // far to the left:w
 
@@ -902,7 +889,7 @@ void WindowManager::applyWindowLayout(const WindowLayout &layout)
                         windowData.geometry_.width(),
                         windowData.geometry_.height(),
                     },
-                    widgets::BoundsChecking::Off);
+                    boundsMode);
             }
         }
 
@@ -937,7 +924,12 @@ void WindowManager::applyWindowLayout(const WindowLayout &layout)
         switch (windowData.state_)
         {
             case WindowDescriptor::State::Minimized: {
-                window.setWindowState(Qt::WindowMinimized);
+                // Minimized main-window restores frequently look like
+                // "open then closed" to users. Start main window visible.
+                if (type != WindowType::Main)
+                {
+                    window.setWindowState(Qt::WindowMinimized);
+                }
             }
             break;
 

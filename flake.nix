@@ -25,9 +25,12 @@
               ninja
               pkg-config
               git
+              stdenv.cc
 
               boost
               openssl
+              libsecret
+              libnotify
 
               qt6.qtbase
               qt6.qtsvg
@@ -37,4 +40,3 @@
         });
     };
 }
-

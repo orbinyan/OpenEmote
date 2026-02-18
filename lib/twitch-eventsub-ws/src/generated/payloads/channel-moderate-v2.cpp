@@ -532,9 +532,7 @@ boost::json::result_for<Timeout, boost::json::value>::type tag_invoke(
         EVENTSUB_BAIL_HERE(error::Kind::FieldMissing);
     }
 
-    auto expiresAt =
-        boost::json::try_value_to<std::chrono::system_clock::time_point>(
-            *jvexpiresAt, AsISO8601());
+    auto expiresAt = try_value_to_iso8601(*jvexpiresAt);
 
     if (expiresAt.has_error())
     {

@@ -44,15 +44,15 @@ public:
                         std::chrono::milliseconds(25000));
     ~SeventvEventAPI();
 
-    struct {
-        Signal<const seventv::eventapi::EmoteAddDispatch &> emoteAdded;
-        Signal<const seventv::eventapi::EmoteUpdateDispatch &> emoteUpdated;
-        Signal<const seventv::eventapi::EmoteRemoveDispatch &> emoteRemoved;
-        Signal<const seventv::eventapi::UserConnectionUpdateDispatch &>
-            userUpdated;
-        Signal<const PersonalEmoteSet &>
-            personalEmoteSetAdded;
-    } signals_;  // NOLINT(readability-identifier-naming)
+	    struct {
+	        Signal<const seventv::eventapi::EmoteAddDispatch &> emoteAdded;
+	        Signal<const seventv::eventapi::EmoteUpdateDispatch &> emoteUpdated;
+	        Signal<const seventv::eventapi::EmoteRemoveDispatch &> emoteRemoved;
+	        Signal<const seventv::eventapi::UserConnectionUpdateDispatch &>
+	            userUpdated;
+	        Signal<const PersonalEmoteSet &>
+	            personalEmoteSetAdded;
+	    } signals_;  // NOLINT(readability-identifier-naming)
 
     /**
      * Subscribes to a user and emote-set

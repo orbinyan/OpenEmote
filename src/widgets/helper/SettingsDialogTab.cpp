@@ -27,7 +27,7 @@ SettingsDialogTab::SettingsDialogTab(SettingsDialog *_dialog,
 
     this->setCursor(QCursor(Qt::PointingHandCursor));
 
-    this->setStyleSheet("color: #FFF");
+    this->setStyleSheet("color: #FFF; border-radius: 6px; padding-left: 2px;");
 }
 
 void SettingsDialogTab::setSelected(bool _selected)
