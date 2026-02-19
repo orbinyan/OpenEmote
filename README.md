@@ -23,7 +23,7 @@ work from:
 - [Testing notes](docs/openemote-testing.md)
 - [Self-hosted quickstart](docs/openemote/self-hosted-quickstart.md)
 - [Contributor notes for OpenEmote maintainers](docs/openemote/CONTRIBUTING_NOTES.md)
- - [Contributing](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Download
 
