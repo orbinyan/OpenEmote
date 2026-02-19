@@ -1,12 +1,12 @@
-![chatterinoLogo](https://user-images.githubusercontent.com/41973452/272541622-52457e89-5f16-4c83-93e7-91866c25b606.png)
-Chatterino 2 [![GitHub Actions Build (Windows, Ubuntu, MacOS)](https://github.com/Chatterino/chatterino2/actions/workflows/build.yml/badge.svg?branch=master)](https://github.com/Chatterino/chatterino2/actions?query=workflow%3ABuild+branch%3Amaster) [![Cirrus CI Build (FreeBSD only)](https://api.cirrus-ci.com/github/Chatterino/chatterino2.svg?branch=master)](https://cirrus-ci.com/github/Chatterino/chatterino2/master) [![Chocolatey Package](https://img.shields.io/chocolatey/v/chatterino?include_prereleases)](https://chocolatey.org/packages/chatterino) [![Flatpak Package](https://img.shields.io/flathub/v/com.chatterino.chatterino)](https://flathub.org/apps/details/com.chatterino.chatterino)
-============
+<img src="resources/icon.png" width="64" height="64" alt="OpenEmote icon" />
 
-Chatterino 2 is a chat client for [Twitch.tv](https://twitch.tv).
-The Chatterino 2 wiki can be found [here](https://wiki.chatterino.com).
-Contribution guidelines can be found [here](https://wiki.chatterino.com/Contributing%20for%20Developers).
+# OpenEmote
 
-## OpenEmote fork docs
+OpenEmote is a fast, Twitch-first chat client based on Chatterino.
+
+[![Build](https://github.com/orbinyan/OpenEmote/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/orbinyan/OpenEmote/actions/workflows/build.yml)
+
+## Docs
 
 - [Open core policy](docs/openemote/OPEN_CORE_POLICY.md)
 - [Release cadence](docs/openemote/RELEASE_CADENCE.md)
@@ -18,18 +18,14 @@ Contribution guidelines can be found [here](https://wiki.chatterino.com/Contribu
 
 OpenEmote builds are published from this repository's Actions and Releases.
 
-- Nightly channel: GitHub tag `nightly-build` (auto-updated by CI from `master`)
+- Nightly channel: GitHub tag `nightly-build` (auto-updated by CI from `main`)
 - Stable channel: semantic tags (for example `v2.5.4-openemote.1`) and release workflow dispatch
-
-Planned public landing path:
-
-- `https://openemote.com/download` (release index + platform routing)
-- GitHub Releases remain source-of-truth artifacts
-- Optional GCS mirror for faster global download and immutable archival
 
 ## Nightly build
 
-You can download the latest OpenEmote nightly build [here](https://github.com/orbinyan/chatterino-openemote/releases/tag/nightly-build)
+You can download the latest OpenEmote nightly build here:
+
+- https://github.com/orbinyan/OpenEmote/releases/tag/nightly-build
 
 You might also need to install the [VC++ Redistributables](https://aka.ms/vs/17/release/vc_redist.x64.exe) from Microsoft if you do not have it installed already.  
 If you still receive an error about `MSVCR120.dll missing`, then you should install the [VC++ 2013 Restributable](https://download.microsoft.com/download/2/E/6/2E61CFA4-993B-4DD4-91DA-3737CD5CD6E3/vcredist_x64.exe).
@@ -39,22 +35,22 @@ If you still receive an error about `MSVCR120.dll missing`, then you should inst
 To get source code with required submodules run:
 
 ```shell
-git clone --recurse-submodules https://github.com/Chatterino/chatterino2.git
+git clone --recurse-submodules https://github.com/orbinyan/OpenEmote.git
 ```
 
 or
 
 ```shell
-git clone https://github.com/Chatterino/chatterino2.git
-cd chatterino2
+git clone https://github.com/orbinyan/OpenEmote.git
+cd OpenEmote
 git submodule update --init --recursive
 ```
 
-- [Building on Windows](../master/BUILDING_ON_WINDOWS.md)
-- [Building on Windows with vcpkg](../master/BUILDING_ON_WINDOWS_WITH_VCPKG.md)
-- [Building on Linux](../master/BUILDING_ON_LINUX.md)
-- [Building on macOS](../master/BUILDING_ON_MAC.md)
-- [Building on FreeBSD](../master/BUILDING_ON_FREEBSD.md)
+- [Building on Windows](BUILDING_ON_WINDOWS.md)
+- [Building on Windows with vcpkg](BUILDING_ON_WINDOWS_WITH_VCPKG.md)
+- [Building on Linux](BUILDING_ON_LINUX.md)
+- [Building on macOS](BUILDING_ON_MAC.md)
+- [Building on FreeBSD](BUILDING_ON_FREEBSD.md)
 
 ## OpenEmote release artifacts (current CI)
 
@@ -67,7 +63,7 @@ From `.github/workflows/build.yml`:
 
 Release behavior today:
 
-- `master` pushes produce/update nightly prerelease artifacts (`nightly-build`)
+- `main` pushes produce/update nightly prerelease artifacts (`nightly-build`)
 - Full stable release publishing is handled by tag/release process (documented in `docs/openemote/RELEASE_DISTRIBUTION.md`)
 
 ## Git blame
