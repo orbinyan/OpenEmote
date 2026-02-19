@@ -8,6 +8,7 @@
 #include "messages/Link.hpp"
 
 #include <pajlada/signals/signalholder.hpp>
+#include <QColor>
 #include <QPen>
 #include <QPoint>
 #include <QRect>
@@ -15,6 +16,8 @@
 
 #include <climits>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 class QPainter;
 
@@ -156,7 +159,9 @@ public:
     ImageWithCircleBackgroundLayoutElement(MessageElement &creator,
                                            ImagePtr image,
                                            const QSize &imageSize, QColor color,
-                                           int padding);
+                                           int padding,
+                                           std::vector<std::pair<QString, QColor>>
+                                               cornerBadges = {});
 
 protected:
     void paint(QPainter &painter, const MessageColors &messageColors) override;
@@ -165,6 +170,7 @@ private:
     const QColor color_;
     const QSize imageSize_;
     const int padding_;
+    const std::vector<std::pair<QString, QColor>> cornerBadges_;
 };
 
 // TEXT

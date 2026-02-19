@@ -290,12 +290,19 @@ void ResizingTextEdit::insertCompletion(const QString &completion)
         ++prefixSize;
     }
 
+    QString appliedCompletion = completion;
+    if (prefix.startsWith('~') && !completion.startsWith('~'))
+    {
+        appliedCompletion.prepend('~');
+    }
+
     QTextCursor tc = this->textCursor();
     int completionStart = tc.position() - prefixSize;
     tc.setPosition(completionStart, QTextCursor::KeepAnchor);
-    tc.insertText(completion);
+    tc.insertText(appliedCompletion);
     this->setTextCursor(tc);
     this->updateGeometry();
+    this->completionInserted.invoke();
 }
 
 bool ResizingTextEdit::canInsertFromMimeData(const QMimeData *source) const

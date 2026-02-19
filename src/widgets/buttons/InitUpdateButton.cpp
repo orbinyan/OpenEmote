@@ -63,7 +63,7 @@ void initUpdateButton(PixmapButton &button,
 
         const auto *imageUrl = getApp()->getUpdates().isError()
                                    ? ":/buttons/updateError.png"
-                                   : ":/buttons/update.png";
+                                   : ":/split/down.png";
         button.setPixmap(QPixmap(imageUrl));
 
         relayout();

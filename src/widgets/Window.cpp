@@ -786,19 +786,8 @@ void Window::onAccountSelected()
 {
     auto user = getApp()->getAccounts()->twitch.getCurrent();
 
-    // update title (also append username on Linux and MacOS)
-    QString windowTitle = Version::instance().fullVersion();
-
-#if defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
-    if (user->isAnon())
-    {
-        windowTitle += " - not logged in";
-    }
-    else
-    {
-        windowTitle += " - " + user->getUserName();
-    }
-#endif
+    // Keep title concise: account identity first.
+    QString windowTitle = user->isAnon() ? "not logged in" : user->getUserName();
 
     if (getApp()->getArgs().safeMode)
     {

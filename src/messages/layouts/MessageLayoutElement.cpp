@@ -10,11 +10,16 @@
 #include "messages/layouts/MessageLayoutContext.hpp"
 #include "messages/MessageElement.hpp"
 #include "providers/twitch/TwitchEmotes.hpp"
+#include "singletons/Settings.hpp"
 #include "util/DebugCount.hpp"
 
 #include <QDebug>
 #include <QPainter>
 #include <QPainterPath>
+
+#include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace {
 
@@ -374,12 +379,14 @@ void ImageWithBackgroundLayoutElement::paint(
 //
 ImageWithCircleBackgroundLayoutElement::ImageWithCircleBackgroundLayoutElement(
     MessageElement &creator, ImagePtr image, const QSize &imageSize,
-    QColor color, int padding)
+    QColor color, int padding,
+    std::vector<std::pair<QString, QColor>> cornerBadges)
     : ImageLayoutElement(creator, image,
                          imageSize + QSize(padding, padding) * 2)
     , color_(color)
     , imageSize_(imageSize)
     , padding_(padding)
+    , cornerBadges_(std::move(cornerBadges))
 {
 }
 
@@ -406,6 +413,121 @@ void ImageWithCircleBackgroundLayoutElement::paint(
         imgRect.translate(this->padding_, this->padding_);
 
         painter.drawPixmap(imgRect, *pixmap, QRectF());
+
+        if (!this->cornerBadges_.empty())
+        {
+            auto *settings = getSettings();
+            const bool linear = settings->openEmoteAvatarBadgeLinear.getValue();
+            auto anchor =
+                settings->openEmoteAvatarBadgeAnchor.getValue().trimmed().toLower();
+            if (anchor != "top" && anchor != "bottom" && anchor != "left" &&
+                anchor != "right")
+            {
+                anchor = settings->openEmoteAvatarBadgeRightSide.getValue()
+                             ? "right"
+                             : "left";
+            }
+            const bool anchorTop = anchor == "top";
+            const bool anchorBottom = anchor == "bottom";
+            const bool anchorRight = anchor == "right";
+            const bool anchorLeft = !anchorTop && !anchorBottom && !anchorRight;
+            const int maxConfigured = std::clamp(
+                settings->openEmoteAvatarCornerBadgeMax.getValue(), 1, 4);
+            const auto badgeCount =
+                std::min<size_t>(maxConfigured, this->cornerBadges_.size());
+            const auto markerDiameter = std::clamp<qreal>(
+                std::min(boxRect.width(), boxRect.height()) * 0.45, 6.0, 10.0);
+            const auto markerHalf = markerDiameter / 2.0;
+            const auto inset = std::max<qreal>(1.0, markerDiameter * 0.15);
+
+            const auto leftX = boxRect.left() + markerHalf + inset;
+            const auto rightX = boxRect.right() - markerHalf - inset;
+            const auto topY = boxRect.top() + markerHalf + inset;
+            const auto bottomY = boxRect.bottom() - markerHalf - inset;
+            const auto midTopY = topY + (bottomY - topY) / 3.0;
+            const auto midBottomY = topY + 2.0 * (bottomY - topY) / 3.0;
+            const auto midLeftX = leftX + (rightX - leftX) / 3.0;
+            const auto midRightX = leftX + 2.0 * (rightX - leftX) / 3.0;
+
+            std::array<QPointF, 4> markerCenters{};
+            if (linear && (anchorLeft || anchorRight))
+            {
+                const auto x = anchorRight ? rightX : leftX;
+                markerCenters = {
+                    QPointF(x, topY),
+                    QPointF(x, midTopY),
+                    QPointF(x, midBottomY),
+                    QPointF(x, bottomY),
+                };
+            }
+            else if (linear)
+            {
+                const auto y = anchorBottom ? bottomY : topY;
+                markerCenters = {
+                    QPointF(leftX, y),
+                    QPointF(midLeftX, y),
+                    QPointF(midRightX, y),
+                    QPointF(rightX, y),
+                };
+            }
+            else if (anchorRight)
+            {
+                markerCenters = {
+                    QPointF(rightX, topY),
+                    QPointF(rightX, bottomY),
+                    QPointF(leftX, topY),
+                    QPointF(leftX, bottomY),
+                };
+            }
+            else if (anchorTop)
+            {
+                markerCenters = {
+                    QPointF(leftX, topY),
+                    QPointF(rightX, topY),
+                    QPointF(leftX, bottomY),
+                    QPointF(rightX, bottomY),
+                };
+            }
+            else if (anchorBottom)
+            {
+                markerCenters = {
+                    QPointF(leftX, bottomY),
+                    QPointF(rightX, bottomY),
+                    QPointF(leftX, topY),
+                    QPointF(rightX, topY),
+                };
+            }
+            else
+            {
+                markerCenters = {
+                    QPointF(leftX, topY),
+                    QPointF(leftX, bottomY),
+                    QPointF(rightX, topY),
+                    QPointF(rightX, bottomY),
+                };
+            }
+
+            auto markerFont = painter.font();
+            markerFont.setBold(true);
+            markerFont.setPixelSize(
+                std::max(6, int(std::round(markerDiameter * 0.65))));
+            painter.setFont(markerFont);
+
+            for (size_t i = 0; i < badgeCount; i++)
+            {
+                const auto &badge = this->cornerBadges_.at(i);
+                const auto &center = markerCenters.at(i);
+                const QRectF markerRect(center.x() - markerHalf,
+                                        center.y() - markerHalf, markerDiameter,
+                                        markerDiameter);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(badge.second);
+                painter.drawEllipse(markerRect);
+                painter.setPen(Qt::white);
+                painter.drawText(markerRect, Qt::AlignCenter,
+                                 badge.first.left(1).toUpper());
+            }
+        }
     }
 }
 

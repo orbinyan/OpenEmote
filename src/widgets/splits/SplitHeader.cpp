@@ -39,7 +39,9 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
+#include <QStringList>
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -430,7 +432,7 @@ std::unique_ptr<QMenu> SplitHeader::createMainMenu()
         h->getDisplaySequence(HotkeyCategory::Window, "popup", {{"split"}}),
         this->split_, &Split::popup);
     menu->addAction(
-        "Popup overlay",
+        "Gaming overlay popout",
         h->getDisplaySequence(HotkeyCategory::Split, "popupOverlay"),
         this->split_, &Split::showOverlayWindow);
     menu->addAction("Search",
@@ -864,6 +866,10 @@ void SplitHeader::updateChannelText()
     this->tooltipText_ = QString();
 
     auto title = channel->getLocalizedName();
+    if (title.startsWith('#'))
+    {
+        title.remove(0, 1);
+    }
 
     if (indirectChannel.getType() == Channel::Type::TwitchWatching)
     {
@@ -920,7 +926,25 @@ void SplitHeader::updateChannelText()
                 this->lastThumbnail_.restart();
             }
             this->tooltipText_ = formatTooltip(*streamStatus, this->thumbnail_);
-            title += formatTitle(*streamStatus, *getSettings());
+
+            QStringList liveMeta;
+            if (streamStatus->rerun)
+            {
+                liveMeta << "rerun";
+            }
+            if (getSettings()->headerViewerCount)
+            {
+                liveMeta << localizeNumbers(streamStatus->viewerCount);
+            }
+            if (getSettings()->headerUptime && !streamStatus->uptime.isEmpty())
+            {
+                liveMeta << streamStatus->uptime;
+            }
+
+            if (!liveMeta.isEmpty())
+            {
+                title += " · " + liveMeta.join(" · ");
+            }
         }
         else
         {
@@ -1003,6 +1027,19 @@ void SplitHeader::paintEvent(QPaintEvent * /*event*/)
     painter.setPen(border);
     painter.drawRect(0, 0, this->width() - 1, this->height() - 2);
     painter.fillRect(0, this->height() - 1, this->width(), 1, background);
+
+    if (this->isLive_)
+    {
+        const auto scale = this->scale();
+        const int dotDiameter = std::max(4, int(5 * scale));
+        const int dotX = int(8 * scale);
+        const int dotY = std::max(0, (this->height() - dotDiameter) / 2);
+
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(this->theme->tabs.liveIndicator);
+        painter.drawEllipse(QRect(dotX, dotY, dotDiameter, dotDiameter));
+    }
 }
 
 void SplitHeader::mousePressEvent(QMouseEvent *event)

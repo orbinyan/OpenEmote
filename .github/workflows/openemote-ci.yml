@@ -1,0 +1,176 @@
+name: OpenEmote CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - "openemote/**"
+      - "feature/**"
+      - "release/**"
+  workflow_dispatch:
+
+concurrency:
+  group: openemote-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (Nix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v19
+
+      - name: Configure
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' develop -c \
+            cmake --preset release
+
+      - name: Build
+        run: |
+          nix --extra-experimental-features 'nix-command flakes' develop -c \
+            cmake --build --preset release -j"$(nproc)"
+
+      - name: Package
+        run: |
+          mkdir -p dist/openemote-linux-x86_64
+          cp build/release/bin/chatterino dist/openemote-linux-x86_64/
+          tar -C dist -czf openemote-linux-x86_64.tar.gz openemote-linux-x86_64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: openemote-linux-x86_64.tar.gz
+          path: openemote-linux-x86_64.tar.gz
+
+  macos:
+    name: macOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4.3.0
+        with:
+          cache: true
+          cache-key-prefix: macOS-QtCache-6.7.1-openemote
+          modules: qtimageformats
+          version: 6.7.1
+
+      - name: Install dependencies
+        run: |
+          brew install openssl rapidjson p7zip create-dmg tree boost hunspell
+
+      - name: Configure
+        run: |
+          cmake -S . -B build/macos-release \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 \
+            -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl \
+            -DUSE_PRECOMPILED_HEADERS=OFF \
+            -DFORCE_JSON_GENERATION=Off \
+            -DCHATTERINO_SPELLCHECK=On
+
+      - name: Build
+        run: |
+          cmake --build build/macos-release -j"$(sysctl -n hw.logicalcpu)"
+
+      - name: Package DMG
+        run: |
+          cd build/macos-release
+          ../../.CI/MacDeploy.sh
+          ../../.CI/CreateDMG.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: openemote-macos.dmg
+          path: build/macos-release/chatterino-macos-Qt-6.7.1.dmg
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    env:
+      CONAN_VERSION: 2.11.0
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4.3.0
+        with:
+          cache: true
+          cache-key-prefix: Windows-QtCache-6.7.1-openemote
+          modules: qtimageformats
+          version: 6.7.1
+
+      - name: Enable Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+
+      - name: Install Conan
+        shell: powershell
+        run: |
+          python3 -c "import site; import sys; print(f'{site.USER_BASE}\\Python{sys.version_info.major}{sys.version_info.minor}\\Scripts')" >> "$GITHUB_PATH"
+          pip3 install --user "conan==${{ env.CONAN_VERSION }}"
+
+      - name: Setup Conan
+        shell: powershell
+        run: |
+          conan profile detect -f
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          mkdir build
+          cd build
+          conan install .. `
+            -s build_type=RelWithDebInfo `
+            -c tools.cmake.cmaketoolchain:generator="NMake Makefiles" `
+            -b missing `
+            --output-folder=. `
+            -o with_openssl3="True"
+
+      - name: Configure
+        shell: powershell
+        run: |
+          cd build
+          cmake `
+            -G"NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -DCMAKE_TOOLCHAIN_FILE="conan_toolchain.cmake" `
+            -DUSE_PRECOMPILED_HEADERS=ON `
+            -DFORCE_JSON_GENERATION=On `
+            -DCHATTERINO_SPELLCHECK=On `
+            ..
+
+      - name: Build
+        shell: powershell
+        run: |
+          cd build
+          set cl=/MP
+          nmake /S /NOLOGO
+
+      - name: Package
+        shell: powershell
+        run: |
+          cd build
+          windeployqt bin/chatterino.exe --release --no-compiler-runtime --no-translations --no-opengl-sw --dir OpenEmote/
+          copy bin\chatterino.exe OpenEmote\
+          7z a openemote-windows-x86_64.zip OpenEmote/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: openemote-windows-x86_64.zip
+          path: build/openemote-windows-x86_64.zip

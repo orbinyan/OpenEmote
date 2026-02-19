@@ -94,6 +94,10 @@ std::optional<TabCompletionModel::SourceKind>
     {
         return SourceKind::Emote;
     }
+    else if (query.startsWith('~'))
+    {
+        return SourceKind::Emote;
+    }
     else if (isFirstWord && (query.startsWith('/') || query.startsWith('.')))
     {
         return SourceKind::Command;

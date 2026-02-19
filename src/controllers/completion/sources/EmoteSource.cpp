@@ -15,7 +15,10 @@
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
+#include "singletons/Settings.hpp"
 #include "widgets/splits/InputCompletionItem.hpp"
+
+#include <QSet>
 
 namespace chatterino::completion {
 
@@ -50,6 +53,48 @@ void addEmojis(std::vector<EmoteItem> &out, const std::vector<EmojiPtr> &map)
                  .isEmoji = true});
         }
     };
+}
+
+QString normalizeChannelName(QString name)
+{
+    name = name.trimmed().toLower();
+    while (name.startsWith('#'))
+    {
+        name.remove(0, 1);
+    }
+    return name;
+}
+
+QSet<QString> parseChannelSet(const QString &csv)
+{
+    QSet<QString> set;
+    for (const auto &entry : csv.split(',', Qt::SkipEmptyParts))
+    {
+        auto normalized = normalizeChannelName(entry);
+        if (!normalized.isEmpty())
+        {
+            set.insert(normalized);
+        }
+    }
+    return set;
+}
+
+bool isAllowedCrossChannel(const QString &sourceChannelName,
+                           const QSet<QString> &allowChannels,
+                           const QSet<QString> &blockChannels,
+                           bool allowlistOnly)
+{
+    if (sourceChannelName.isEmpty() || blockChannels.contains(sourceChannelName))
+    {
+        return false;
+    }
+
+    if (allowlistOnly)
+    {
+        return allowChannels.contains(sourceChannelName);
+    }
+
+    return true;
 }
 
 }  // namespace
@@ -122,6 +167,62 @@ void EmoteSource::initializeFromChannel(const Channel *channel)
             {
                 addEmotes(emotes, *seventv, "Channel 7TV");
             }
+        }
+
+        if (getSettings()->openEmoteEnableCrossChannelEmotes.getValue())
+        {
+            const bool allowlistOnly =
+                getSettings()
+                    ->openEmoteCrossChannelEmotesAllowlistMode.getValue();
+            const auto allowChannels = parseChannelSet(
+                getSettings()->openEmoteCrossChannelEmotesAllowChannels
+                    .getValue());
+            const auto blockChannels = parseChannelSet(
+                getSettings()->openEmoteCrossChannelEmotesBlockChannels
+                    .getValue());
+            const auto currentChannelName =
+                tc ? normalizeChannelName(tc->getName()) : QString{};
+
+            app->getTwitch()->forEachChannel([&](const auto &c) {
+                auto *other = dynamic_cast<TwitchChannel *>(c.get());
+                if (other == nullptr)
+                {
+                    return;
+                }
+
+                const auto sourceChannelName =
+                    normalizeChannelName(other->getName());
+                if (sourceChannelName.isEmpty() ||
+                    sourceChannelName == currentChannelName)
+                {
+                    return;
+                }
+
+                if (!isAllowedCrossChannel(sourceChannelName, allowChannels,
+                                           blockChannels, allowlistOnly))
+                {
+                    return;
+                }
+
+                if (auto bttv = other->bttvEmotes())
+                {
+                    addEmotes(emotes, *bttv,
+                              QString("Cross-channel BetterTTV (%1)")
+                                  .arg(sourceChannelName));
+                }
+                if (auto ffz = other->ffzEmotes())
+                {
+                    addEmotes(emotes, *ffz,
+                              QString("Cross-channel FrankerFaceZ (%1)")
+                                  .arg(sourceChannelName));
+                }
+                if (auto seventv = other->seventvEmotes())
+                {
+                    addEmotes(emotes, *seventv,
+                              QString("Cross-channel 7TV (%1)")
+                                  .arg(sourceChannelName));
+                }
+            });
         }
 
         if (auto bttvG = app->getBttvEmotes()->emotes())

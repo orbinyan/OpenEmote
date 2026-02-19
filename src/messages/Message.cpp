@@ -137,6 +137,13 @@ QJsonObject Message::toJson() const
     msg["twitchBadgeInfos"_L1] = twitchBadgeInfos;
 
     msg["externalBadges"_L1] = QJsonArray::fromStringList(this->externalBadges);
+    msg["openEmoteAvatarModelId"_L1] = this->openEmoteAvatarModelId;
+    msg["openEmoteAvatarSkinId"_L1] = this->openEmoteAvatarSkinId;
+    msg["openEmoteAvatarIdleAsset"_L1] = this->openEmoteAvatarIdleAsset;
+    msg["openEmoteAvatarAction"_L1] = this->openEmoteAvatarAction;
+    msg["openEmoteAvatarActionTarget"_L1] =
+        this->openEmoteAvatarActionTarget;
+    msg["openEmotePreferredNickname"_L1] = this->openEmotePreferredNickname;
 
     if (this->highlightColor)
     {

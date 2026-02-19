@@ -80,21 +80,32 @@ void ClassicTabEmoteStrategy::apply(const std::vector<EmoteItem> &items,
 {
     qCDebug(LOG) << "ClassicTabEmoteStrategy apply" << query;
     bool colonStart = query.startsWith(':');
+    bool zeroWidthOnly = false;
     QStringView normalizedQuery = query;
     if (colonStart)
     {
         // TODO(Qt6): use sliced
         normalizedQuery = normalizedQuery.mid(1);
     }
+    if (normalizedQuery.startsWith('~'))
+    {
+        normalizedQuery = normalizedQuery.mid(1);
+        zeroWidthOnly = true;
+    }
 
     std::set<EmoteItem, CompletionEmoteOrder> emotes;
 
     for (const auto &item : items)
     {
+        if (zeroWidthOnly && !item.emote->zeroWidth)
+        {
+            continue;
+        }
+
         QStringView itemQuery;
         if (item.isEmoji)
         {
-            if (colonStart)
+            if (colonStart && !zeroWidthOnly)
             {
                 itemQuery = normalizedQuery;
             }
@@ -105,7 +116,7 @@ void ClassicTabEmoteStrategy::apply(const std::vector<EmoteItem> &items,
         }
         else
         {
-            itemQuery = query;
+            itemQuery = zeroWidthOnly ? normalizedQuery : query;
         }
 
         if (startsWithOrContains(item.searchName, itemQuery,

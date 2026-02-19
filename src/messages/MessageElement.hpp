@@ -14,12 +14,14 @@
 
 #include <magic_enum/magic_enum.hpp>
 #include <pajlada/signals/signalholder.hpp>
+#include <QColor>
 #include <QRect>
 #include <QString>
 #include <QTime>
 
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 class QJsonObject;
@@ -231,7 +233,9 @@ public:
     static constexpr std::string_view TYPE = "circular-image";
 
     CircularImageElement(ImagePtr image, int padding, QColor background,
-                         MessageElementFlags flags);
+                         MessageElementFlags flags,
+                         std::vector<std::pair<QString, QColor>> cornerBadges =
+                             {});
 
     void addToContainer(MessageLayoutContainer &container,
                         const MessageLayoutContext &ctx) override;
@@ -247,11 +251,16 @@ public:
     {
         return this->background_;
     }
+    const std::vector<std::pair<QString, QColor>> &cornerBadges() const
+    {
+        return this->cornerBadges_;
+    }
 
 private:
     ImagePtr image_;
     int padding_;
     QColor background_;
+    std::vector<std::pair<QString, QColor>> cornerBadges_;
 };
 
 // contains a text, it will split it into words
@@ -452,7 +461,8 @@ public:
     static constexpr std::string_view TYPE = "emote";
 
     EmoteElement(const EmotePtr &data, MessageElementFlags flags_,
-                 const MessageColor &textElementColor = MessageColor::Text);
+                 const MessageColor &textElementColor = MessageColor::Text,
+                 float emoteScaleMultiplier = 1.F);
 
     void addToContainer(MessageLayoutContainer &container,
                         const MessageLayoutContext &ctx) override;
@@ -473,6 +483,7 @@ private:
     bool usingFallbackColor_ = false;
 
     EmotePtr emote_;
+    float emoteScaleMultiplier_ = 1.F;
 };
 
 // A LayeredEmoteElement represents multiple Emotes layered on top of each other.
@@ -490,7 +501,8 @@ public:
 
     LayeredEmoteElement(
         std::vector<Emote> &&emotes, MessageElementFlags flags,
-        const MessageColor &textElementColor = MessageColor::Text);
+        const MessageColor &textElementColor = MessageColor::Text,
+        float emoteScaleMultiplier = 1.F);
 
     void addEmoteLayer(const Emote &emote);
 
@@ -520,6 +532,7 @@ private:
 
     std::unique_ptr<TextElement> textElement_;
     MessageColor textElementColor_;
+    float emoteScaleMultiplier_ = 1.F;
 };
 
 class BadgeElement : public MessageElement
@@ -683,6 +696,25 @@ public:
 
     QJsonObject toJson() const override;
     std::string_view type() const override;
+};
+
+// reserves fixed layout space for alignment purposes
+class FixedSpaceElement : public MessageElement
+{
+public:
+    static constexpr std::string_view TYPE = "fixed-space";
+
+    FixedSpaceElement(float width, float height, MessageElementFlags flags);
+
+    void addToContainer(MessageLayoutContainer &container,
+                        const MessageLayoutContext &ctx) override;
+
+    QJsonObject toJson() const override;
+    std::string_view type() const override;
+
+private:
+    float width_;
+    float height_;
 };
 
 }  // namespace chatterino

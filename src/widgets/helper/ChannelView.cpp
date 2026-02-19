@@ -2233,12 +2233,15 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
         dynamic_cast<const TimestampElement *>(element);
     bool isNotEmote = emoteElement == nullptr && layeredEmoteElement == nullptr;
     const MessageElementFlags hoverFlags = element->getFlags();
+    const bool hoverTimestampEligible =
+        timestampElement != nullptr ||
+        getSettings()->openEmoteTimestampGapsOnly.getValue();
     const bool isHoverTimestampTextTarget =
-        timestampElement != nullptr &&
+        hoverTimestampEligible &&
         hoverFlags.hasNone({MessageElementFlag::ReplyButton,
-                           MessageElementFlag::RepliedMessage,
-                           MessageElementFlag::Username,
-                           MessageElementFlag::Badges});
+                            MessageElementFlag::RepliedMessage,
+                            MessageElementFlag::Username,
+                            MessageElementFlag::Badges});
     const auto hoverTimestamp = isHoverTimestampTextTarget
                                    ? formatHoverTimestamp(layout->getMessagePtr())
                                    : QString{};

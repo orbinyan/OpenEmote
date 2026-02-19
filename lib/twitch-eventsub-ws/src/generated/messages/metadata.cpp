@@ -53,9 +53,7 @@ boost::json::result_for<Metadata, boost::json::value>::type tag_invoke(
         EVENTSUB_BAIL_HERE(error::Kind::FieldMissing);
     }
 
-    auto messageTimestamp =
-        boost::json::try_value_to<std::chrono::system_clock::time_point>(
-            *jvmessageTimestamp, AsISO8601());
+    auto messageTimestamp = try_value_to_iso8601(*jvmessageTimestamp);
 
     if (messageTimestamp.has_error())
     {

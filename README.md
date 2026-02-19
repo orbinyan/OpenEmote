@@ -11,6 +11,8 @@ OpenEmote is a fast, Twitch-first chat client based on Chatterino.
 - [Open core policy](docs/openemote/OPEN_CORE_POLICY.md)
 - [Release cadence](docs/openemote/RELEASE_CADENCE.md)
 - [Release distribution + hosting](docs/openemote/RELEASE_DISTRIBUTION.md)
+- [Release + hosting notes](docs/openemote-release.md)
+- [Testing notes](docs/openemote-testing.md)
 - [Self-hosted quickstart](docs/openemote/self-hosted-quickstart.md)
 - [Contributor notes for OpenEmote maintainers](docs/openemote/CONTRIBUTING_NOTES.md)
 
@@ -64,6 +66,20 @@ From `.github/workflows/build.yml`:
 Release behavior today:
 
 - `main` pushes produce/update nightly prerelease artifacts (`nightly-build`)
+- Full stable release publishing is handled by tag/release process (documented in `docs/openemote/RELEASE_DISTRIBUTION.md`)
+
+## OpenEmote release artifacts (current CI)
+
+From `.github/workflows/build.yml`:
+
+- Windows: `chatterino-windows-x86-64-Qt-<qt>.zip`
+- Windows symbols: `chatterino-windows-x86-64-Qt-<qt>-symbols.pdb.7z`
+- macOS: `chatterino-macos-Qt-<qt>.dmg`
+- Linux: `Chatterino-ubuntu-22.04-Qt-<qt>.deb`, `Chatterino-ubuntu-24.04-Qt-<qt>.deb`
+
+Release behavior today:
+
+- `master` pushes produce/update nightly prerelease artifacts (`nightly-build`)
 - Full stable release publishing is handled by tag/release process (documented in `docs/openemote/RELEASE_DISTRIBUTION.md`)
 
 ## Git blame

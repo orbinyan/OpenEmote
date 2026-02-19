@@ -301,12 +301,13 @@ void SettingsDialog::selectTab(SettingsDialogTab *tab, bool byUser)
     if (this->selectedTab_ != nullptr)
     {
         this->selectedTab_->setSelected(false);
-        this->selectedTab_->setStyleSheet("color: #FFF");
+        this->selectedTab_->setStyleSheet(
+            "color: #FFF; border-radius: 6px; padding-left: 2px;");
     }
 
     tab->setSelected(true);
     tab->setStyleSheet(
-        "background: #222; color: #4FC3F7;"  // Should this be same as accent color?
+        "background: #222; color: #4FC3F7; border-radius: 6px; padding-left: 2px;"  // Should this be same as accent color?
         "/*border: 1px solid #555; border-right: none;*/");
     this->selectedTab_ = tab;
     if (byUser)

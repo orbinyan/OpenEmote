@@ -200,29 +200,56 @@ std::optional<QPixmap> Frames::first() const
 QList<Frame> readFrames(QImageReader &reader, const Url &url)
 {
     QList<Frame> frames;
-    frames.reserve(reader.imageCount());
+    constexpr int MAX_FRAME_COUNT = 300;
+    frames.reserve(1);
+    int64_t bytesLoaded = 0;
 
-    for (int index = 0; index < reader.imageCount(); ++index)
+    for (int index = 0; index < MAX_FRAME_COUNT; ++index)
     {
         auto pixmap = QPixmap::fromImageReader(&reader);
-        if (!pixmap.isNull())
+        if (pixmap.isNull())
         {
-            // It seems that browsers have special logic for fast animations.
-            // This implements Chrome and Firefox's behavior which uses
-            // a duration of 100 ms for any frames that specify a duration of <= 10 ms.
-            // See http://webkit.org/b/36082 for more information.
-            // https://github.com/SevenTV/chatterino7/issues/46#issuecomment-1010595231
-            int duration = reader.nextImageDelay();
-            if (duration <= 10)
-            {
-                duration = 100;
-            }
-            duration = std::max(20, duration);
-            frames.append(Frame{
-                .image = std::move(pixmap),
-                .duration = duration,
-            });
+            break;
         }
+
+        bytesLoaded += static_cast<int64_t>(pixmap.width()) *
+                       static_cast<int64_t>(pixmap.height()) * 4;
+        if (bytesLoaded > Image::maxBytesRam)
+        {
+            qCDebug(chatterinoImage)
+                << "Aborting animated image load due to memory cap"
+                << url.string;
+            frames.clear();
+            break;
+        }
+
+        // It seems that browsers have special logic for fast animations.
+        // This implements Chrome and Firefox's behavior which uses
+        // a duration of 100 ms for any frames that specify a duration of <= 10 ms.
+        // See http://webkit.org/b/36082 for more information.
+        // https://github.com/SevenTV/chatterino7/issues/46#issuecomment-1010595231
+        int duration = reader.nextImageDelay();
+        if (duration <= 10)
+        {
+            duration = 100;
+        }
+        duration = std::max(20, duration);
+        frames.append(Frame{
+            .image = std::move(pixmap),
+            .duration = duration,
+        });
+
+        if (!reader.supportsAnimation())
+        {
+            break;
+        }
+    }
+
+    if (frames.size() >= MAX_FRAME_COUNT)
+    {
+        qCDebug(chatterinoImage)
+            << "Capped animated image frame count at" << MAX_FRAME_COUNT
+            << "for" << url.string;
     }
 
     if (frames.empty())
@@ -540,19 +567,8 @@ void Image::actuallyLoad()
                 return;
             }
 
-            // returns 1 for non-animated formats
-            if (reader.imageCount() <= 0)
-            {
-                qCDebug(chatterinoImage)
-                    << "Error: image has less than 1 frame "
-                    << shared->url().string << ": " << reader.errorString();
-                shared->empty_ = true;
-                return;
-            }
-
             // use "double" to prevent int overflows
-            if (double(size.width()) * double(size.height()) *
-                    double(reader.imageCount()) * 4.0 >
+            if (double(size.width()) * double(size.height()) * 4.0 >
                 double(Image::maxBytesRam))
             {
                 qCDebug(chatterinoImage) << "image too large in RAM";

@@ -26,6 +26,7 @@ public:
     pajlada::Signals::NoArgSignal focusLost;
     pajlada::Signals::Signal<const QMimeData *> imagePasted;
     pajlada::Signals::Signal<QMenu *, QPoint> contextMenuRequested;
+    pajlada::Signals::NoArgSignal completionInserted;
 
     void setCompleter(QCompleter *c);
     /**

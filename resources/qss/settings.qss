@@ -1,44 +1,27 @@
 * {
-    font-size: 14px;
-    font-family: "Segoe UI";
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    color: #ebebeb;
 }
 
-QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
-}
-
-chatterino--ComboBox {
-    width: 120px;
-}
-
-QScrollArea {
-    border: none;
-}
-
+QScrollArea,
 QScrollArea QFrame {
     border: none;
 }
 
-QComboBox QFrame {
-    background: #000;
-    border: 1px solid #66BCFF;
+chatterino--SettingsPage #generalSettingsScrollContent {
+    background: #191919;
 }
 
 chatterino--SettingsDialog chatterino--SettingsDialogTab {
-    font-family: "Segoe UI";
-    font-size: 14;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    color: #808080;
 }
 
-chatterino--SettingsPage #generalSettingsScrollContent {
-    background: #222;
-}
-
-chatterino--SettingsPage QToolTip {
-    padding: 2px;
-    background-color: #333333;
-    border: 1px solid #545454;
-    color: white;
+chatterino--SettingsDialog chatterino--SettingsDialogTab:hover {
+    background: #252525;
+    color: #ebebeb;
 }
 
 chatterino--PageHeader {
@@ -46,28 +29,143 @@ chatterino--PageHeader {
 }
 
 chatterino--TitleLabel {
-    font-family: "Segoe UI light";
-    font-size: 24px;
-    color: #4FC3F7; /* Should this be same as accent color? */
+    font-size: 20px;
+    font-weight: 600;
+    color: #ebebeb;
 }
 
 chatterino--SubtitleLabel {
-    font-family: "Segoe UI light";
-    font-size: 16px;
-    color: #4FC3F7; /* Should this be same as accent color? */
+    font-size: 14px;
+    color: #808080;
 }
 
-chatterino--DescriptionLabel {
-    color: #999;
+chatterino--DescriptionLabel,
+QLabel#description {
+    color: #808080;
+    font-size: 12px;
 }
 
 QLabel#description {
-    color: #999;
     padding-left: 10px;
 }
 
 chatterino--NavigationLabel {
-    font-family: "Segoe UI light";
-    font-size: 15px;
-    color: #A6DDF4;
+    font-size: 13px;
+    color: #808080;
+    letter-spacing: 0.02em;
+}
+
+chatterino--ComboBox {
+    width: 120px;
+}
+
+QToolTip,
+chatterino--SettingsPage QToolTip {
+    padding: 4px 8px;
+    background: #252525;
+    border: 1px solid #363636;
+    border-radius: 4px;
+    color: #ebebeb;
+    font-size: 11px;
+}
+
+QLineEdit,
+QTextEdit,
+QPlainTextEdit,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox {
+    background: #252525;
+    border: 1px solid #282828;
+    border-radius: 6px;
+    color: #ebebeb;
+    padding: 4px 8px;
+}
+
+QLineEdit:focus,
+QTextEdit:focus,
+QPlainTextEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border-color: #363636;
+}
+
+QAbstractButton {
+    border: 1px solid #282828;
+    border-radius: 6px;
+    background: transparent;
+    color: #808080;
+    padding: 4px 10px;
+}
+
+QAbstractButton:hover {
+    background: #2b2b2b;
+    border-color: #363636;
+    color: #ebebeb;
+}
+
+QAbstractButton:pressed {
+    background: #252525;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #363636;
+    border-radius: 3px;
+    background: #252525;
+}
+
+QCheckBox::indicator:checked {
+    background: #c8c8c8;
+    border-color: #c8c8c8;
+}
+
+/* OpenEmote toggle switches (opt-in via dynamic property on the checkbox). */
+QCheckBox[openemoteToggle="true"] {
+    spacing: 10px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+QCheckBox[openemoteToggle="true"]::indicator {
+    width: 44px;
+    height: 24px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+}
+
+QCheckBox[openemoteToggle="true"]::indicator:unchecked {
+    image: url(":/settings/toggle_off.svg");
+}
+
+QCheckBox[openemoteToggle="true"]::indicator:checked {
+    image: url(":/settings/toggle_on.svg");
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 4px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 2px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
 }
