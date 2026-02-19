@@ -33,16 +33,54 @@
 #endif
 
 #include <memory>
+#include <cstdio>
+#include <cstdlib>
 
 using namespace chatterino;
+
+namespace {
+
+QtMessageHandler gQtMessageHandler = nullptr;
+
+void openEmoteQtMessageHandler(QtMsgType type, const QMessageLogContext &context,
+                               const QString &message)
+{
+    if (message.startsWith(QStringLiteral("QBuffer::seek: Invalid pos:")))
+    {
+        return;
+    }
+
+    if (gQtMessageHandler != nullptr)
+    {
+        gQtMessageHandler(type, context, message);
+        return;
+    }
+
+    const auto utf8 = message.toUtf8();
+    std::fwrite(utf8.constData(), 1, static_cast<size_t>(utf8.size()), stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    if (type == QtFatalMsg)
+    {
+        std::abort();
+    }
+}
+
+void installOpenEmoteQtMessageHandler()
+{
+    gQtMessageHandler = qInstallMessageHandler(openEmoteQtMessageHandler);
+}
+
+}  // namespace
 
 int main(int argc, char **argv)
 {
     QApplication a(argc, argv);
+    installOpenEmoteQtMessageHandler();
 
-    QCoreApplication::setApplicationName("chatterino");
+    QCoreApplication::setApplicationName("openemote");
     QCoreApplication::setApplicationVersion(CHATTERINO_VERSION);
-    QCoreApplication::setOrganizationDomain("chatterino.com");
+    QCoreApplication::setOrganizationDomain("openemote.com");
 #ifdef Q_OS_WIN
     SetCurrentProcessExplicitAppUserModelID(
         Version::instance().appUserModelID().c_str());

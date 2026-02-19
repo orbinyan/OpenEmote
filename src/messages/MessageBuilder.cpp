@@ -59,12 +59,16 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFileInfo>
+#include <QHash>
+#include <QSet>
 #include <QStringBuilder>
 #include <QTimeZone>
 
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 using namespace chatterino::literals;
 
@@ -232,9 +236,44 @@ QString stylizeUsername(const QString &username, const Message &message)
         break;
     }
 
-    if (auto nicknameText = getSettings()->matchNickname(usernameText))
+    QStringList nicknameCandidates;
+    const auto addCandidate = [&nicknameCandidates](const QString &candidate) {
+        const auto trimmed = candidate.trimmed();
+        if (trimmed.isEmpty())
+        {
+            return;
+        }
+        for (const auto &existing : nicknameCandidates)
+        {
+            if (existing.compare(trimmed, Qt::CaseInsensitive) == 0)
+            {
+                return;
+            }
+        }
+        nicknameCandidates.append(trimmed);
+    };
+
+    if (!message.userID.trimmed().isEmpty())
     {
-        usernameText = *nicknameText;
+        addCandidate(QString("id:%1").arg(message.userID.trimmed()));
+    }
+    addCandidate(message.loginName);
+    addCandidate(message.displayName);
+    addCandidate(message.localizedName);
+    addCandidate(usernameText);
+
+    for (const auto &candidate : nicknameCandidates)
+    {
+        if (auto nicknameText = getSettings()->matchNickname(candidate))
+        {
+            return *nicknameText;
+        }
+    }
+
+    const auto preferredNickname = message.openEmotePreferredNickname.trimmed();
+    if (!preferredNickname.isEmpty())
+    {
+        return preferredNickname;
     }
 
     return usernameText;
@@ -456,6 +495,1150 @@ EmotePtr makeSharedChatBadge(const QString &sourceName,
     });
 }
 
+float openEmoteChannelScaleForName(QStringView channelName)
+{
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return 1.F;
+    }
+
+    static QString cachedRaw;
+    static QHash<QString, float> cachedScales;
+
+    const auto raw =
+        getSettings()->openEmoteChannelEmoteScaleOverrides.getValue().trimmed();
+    if (raw != cachedRaw)
+    {
+        cachedRaw = raw;
+        cachedScales.clear();
+
+        for (const auto &entry : raw.split(',', Qt::SkipEmptyParts))
+        {
+            const auto parts = entry.split('=', Qt::SkipEmptyParts);
+            if (parts.size() != 2)
+            {
+                continue;
+            }
+
+            bool ok = false;
+            const auto parsedScale = parts[1].trimmed().toFloat(&ok);
+            if (!ok)
+            {
+                continue;
+            }
+
+            auto key = parts[0].trimmed().toLower();
+            if (key.startsWith('#'))
+            {
+                key.remove(0, 1);
+            }
+            if (key.isEmpty())
+            {
+                continue;
+            }
+            cachedScales.insert(key, parsedScale);
+        }
+    }
+
+    auto key = channelName.toString().trimmed().toLower();
+    if (key.startsWith('#'))
+    {
+        key.remove(0, 1);
+    }
+    if (key.isEmpty())
+    {
+        return 1.F;
+    }
+
+    return std::clamp(cachedScales.value(key, 1.F), 0.25F, 6.F);
+}
+
+float openEmoteChannelScaleForChannel(const TwitchChannel *twitchChannel)
+{
+    if (twitchChannel == nullptr)
+    {
+        return 1.F;
+    }
+
+    return openEmoteChannelScaleForName(twitchChannel->getName());
+}
+
+void appendOpenEmoteAvatarDecorators(MessageBuilder *builder,
+                                     const QVariantMap &tags);
+std::vector<std::pair<QString, QColor>> collectOpenEmoteAvatarCornerBadges(
+    const QVariantMap &tags);
+struct OpenEmoteIdentityMetrics {
+    int statusBadgeCount = 0;
+    int textBadgeCount = 0;
+};
+
+std::optional<EmotePtr> makeOpenEmoteAuthorAvatar(const Message &message,
+                                                  float targetPixels = 18.F)
+{
+    if (message.userID.isEmpty())
+    {
+        return std::nullopt;
+    }
+
+    auto twitchUser = getApp()->getTwitchUsers()->resolveID({message.userID});
+    if (!twitchUser || twitchUser->profilePictureUrl.isEmpty())
+    {
+        return std::nullopt;
+    }
+
+    auto avatar1x = twitchUser->profilePictureUrl;
+    auto avatar2x = twitchUser->profilePictureUrl;
+    auto avatar4x = twitchUser->profilePictureUrl;
+
+    if (twitchUser->profilePictureUrl.contains("300x300"))
+    {
+        auto [urlBegin, urlEnd] = splitOnce(twitchUser->profilePictureUrl,
+                                            u"300x300");
+        avatar1x = urlBegin % u"28x28" % urlEnd;
+        avatar2x = urlBegin % u"70x70" % urlEnd;
+        avatar4x = urlBegin % u"150x150" % urlEnd;
+    }
+
+    auto displayName =
+        message.displayName.isEmpty() ? message.loginName : message.displayName;
+    auto tooltipName = message.localizedName.isEmpty()
+                           ? displayName
+                           : QString("%1 (%2)")
+                                 .arg(message.localizedName, displayName);
+    auto profileUrl = message.loginName.isEmpty()
+                          ? Url{"https://www.twitch.tv"}
+                          : Url{u"https://www.twitch.tv/%1"_s.arg(
+                                message.loginName)};
+
+    return std::make_shared<Emote>(Emote{
+        .name = EmoteName{},
+        .images = ImageSet{
+            Image::fromUrl({avatar1x}, targetPixels / 28.F),
+            Image::fromUrl({avatar2x}, targetPixels / 70.F),
+            Image::fromUrl({avatar4x}, targetPixels / 150.F),
+        },
+        .tooltip = Tooltip{QString("Author avatar: %1").arg(tooltipName)},
+        .homePage = profileUrl,
+    });
+}
+
+bool appendOpenEmoteAuthorAvatarElement(MessageBuilder *builder,
+                                        const QVariantMap &tags,
+                                        MessageElementFlags flags,
+                                        float targetPixels,
+                                        bool appendDecorators)
+{
+    // Product policy (current phase): avatars are user-card only.
+    // Do not render avatar identity inline in chat rows yet.
+    (void)builder;
+    (void)tags;
+    (void)flags;
+    (void)targetPixels;
+    (void)appendDecorators;
+    return false;
+
+    const bool useCornerBadges =
+        !getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+        getSettings()->openEmoteAvatarCornerBadges;
+    auto cornerBadges =
+        useCornerBadges ? collectOpenEmoteAvatarCornerBadges(tags)
+                        : std::vector<std::pair<QString, QColor>>{};
+
+    auto profileName = builder->message().displayName.isEmpty()
+                           ? builder->message().loginName
+                           : builder->message().displayName;
+    auto tooltipName =
+        builder->message().localizedName.isEmpty()
+            ? profileName
+            : QString("%1 (%2)")
+                  .arg(builder->message().localizedName, profileName);
+
+    if (auto avatar = makeOpenEmoteAuthorAvatar(builder->message(), targetPixels))
+    {
+        if (auto avatarImage = avatar.value()->images.getImage(1.F))
+        {
+            builder
+                ->emplace<CircularImageElement>(avatarImage, 1, Qt::transparent,
+                                                flags,
+                                                std::move(cornerBadges))
+                ->setLink({Link::UserInfo, profileName})
+                ->setTooltip(QString("Author: %1").arg(tooltipName));
+        }
+
+        if (appendDecorators && getSettings()->openEmoteAvatarDecorators &&
+            !useCornerBadges)
+        {
+            appendOpenEmoteAvatarDecorators(builder, tags);
+        }
+
+        return true;
+    }
+
+    const auto labelText =
+        profileName.isEmpty() ? QString("[?]")
+                              : QString("[%1]").arg(profileName.left(1).toUpper());
+
+    builder
+        ->emplace<TextElement>(labelText, flags, MessageColor::System,
+                               FontStyle::ChatMediumBold)
+        ->setLink({Link::UserInfo, profileName})
+        ->setTooltip(QString("Author: %1").arg(tooltipName));
+
+    if (appendDecorators && getSettings()->openEmoteAvatarDecorators)
+    {
+        appendOpenEmoteAvatarDecorators(builder, tags);
+    }
+
+    return true;
+}
+
+QStringList openEmoteConfiguredBadgePackIds()
+{
+    QStringList packIds;
+    for (const auto &token :
+         getSettings()
+             ->openEmoteCustomBadgePackAllowlist.getValue()
+             .split(',', Qt::SkipEmptyParts))
+    {
+        auto value = token.trimmed().toLower();
+        if (value.isEmpty() ||
+            packIds.contains(value, Qt::CaseInsensitive))
+        {
+            continue;
+        }
+        packIds.append(value);
+    }
+    return packIds;
+}
+
+std::pair<QString, QString> parseOpenEmoteBadgeToken(const QString &token)
+{
+    const auto value = token.trimmed();
+    if (value.isEmpty())
+    {
+        return {};
+    }
+
+    for (const auto separator : {':', '/'})
+    {
+        const auto index = value.indexOf(separator);
+        if (index > 0 && index + 1 < value.size())
+        {
+            return {value.left(index).trimmed().toLower(),
+                    value.mid(index + 1).trimmed()};
+        }
+    }
+
+    return {QString{}, value};
+}
+
+std::pair<QString, QString> parseOpenEmoteAvatarActionCommand(
+    QStringView messageText)
+{
+    static const QRegularExpression actionRegex(
+        QStringLiteral(R"(^\s*!(shake|hug|wave)\s+@?([A-Za-z0-9_]{2,32})\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const auto text = messageText.toString();
+    const auto match = actionRegex.match(text);
+    if (!match.hasMatch())
+    {
+        return {};
+    }
+
+    return {match.captured(1).toLower(), match.captured(2)};
+}
+
+void parseOpenEmoteAvatarModelMetadata(MessageBuilder *builder,
+                                       const QVariantMap &tags,
+                                       QStringView content)
+{
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return;
+    }
+
+    const auto parseBoundedTag = [&tags](const QString &name,
+                                         int maxLength) -> QString {
+        auto value = parseTagString(tags.value(name).toString()).trimmed();
+        if (value.isEmpty())
+        {
+            return {};
+        }
+        return value.left(maxLength);
+    };
+
+    builder->message().openEmoteAvatarModelId =
+        parseBoundedTag("openemote-avatar-model", 96);
+    builder->message().openEmoteAvatarSkinId =
+        parseBoundedTag("openemote-avatar-skin", 96);
+    builder->message().openEmoteAvatarIdleAsset =
+        parseBoundedTag("openemote-avatar-idle", 512);
+    builder->message().openEmotePreferredNickname =
+        parseBoundedTag("openemote-preferred-nickname", 64);
+    if (builder->message().openEmotePreferredNickname.isEmpty())
+    {
+        builder->message().openEmotePreferredNickname =
+            parseBoundedTag("openemote-preferred-name", 64);
+    }
+
+    auto action = parseBoundedTag("openemote-avatar-action", 24).toLower();
+    auto target = parseBoundedTag("openemote-avatar-target", 32);
+
+    if (action.isEmpty())
+    {
+        const auto parsed = parseOpenEmoteAvatarActionCommand(content);
+        action = parsed.first;
+        target = parsed.second;
+    }
+
+    if (action == "shake" || action == "hug" || action == "wave")
+    {
+        builder->message().openEmoteAvatarAction = action;
+        builder->message().openEmoteAvatarActionTarget = target;
+    }
+}
+
+bool shouldRenderOpenEmoteTimestamp(Channel *channel,
+                                    const Message &currentMessage,
+                                    const QDateTime &currentTimestamp)
+{
+    if (!getSettings()->showTimestamps)
+    {
+        return false;
+    }
+
+    if (getSettings()->openEmoteTimestampAlwaysSystem &&
+        currentMessage.flags.hasAny({MessageFlag::System,
+                                     MessageFlag::ModerationAction,
+                                     MessageFlag::Subscription,
+                                     MessageFlag::Timeout}))
+    {
+        return true;
+    }
+
+    const auto alwaysUsersCsv =
+        getSettings()->openEmoteTimestampAlwaysUsers.getValue();
+    if (!alwaysUsersCsv.trimmed().isEmpty() &&
+        !currentMessage.loginName.trimmed().isEmpty())
+    {
+        for (const auto &token :
+             alwaysUsersCsv.split(',', Qt::SkipEmptyParts))
+        {
+            const auto user = token.trimmed();
+            if (user.isEmpty())
+            {
+                continue;
+            }
+            if (currentMessage.loginName.compare(user, Qt::CaseInsensitive) ==
+                0)
+            {
+                return true;
+            }
+        }
+    }
+
+    if (!getSettings()->openEmoteTimestampGapsOnly)
+    {
+        return true;
+    }
+
+    const int thresholdMinutes =
+        std::clamp(getSettings()->openEmoteTimestampGapMinutes.getValue(), 1,
+                   400);
+    const auto thresholdSeconds = thresholdMinutes * 60;
+
+    if (channel == nullptr)
+    {
+        return true;
+    }
+
+    const auto snapshot = channel->getMessageSnapshot();
+    for (auto it = snapshot.rbegin(); it != snapshot.rend(); ++it)
+    {
+        const auto &previous = *it;
+        if (previous == nullptr || !previous->serverReceivedTime.isValid())
+        {
+            continue;
+        }
+        return previous->serverReceivedTime.secsTo(currentTimestamp) >=
+               thresholdSeconds;
+    }
+
+    // First message in a view should show a timestamp.
+    return true;
+}
+
+QString openEmoteAvatarCornerLabel(const QString &badgeKey)
+{
+    if (badgeKey == "broadcaster")
+    {
+        return "B";
+    }
+    if (badgeKey == "moderator")
+    {
+        return "M";
+    }
+    if (badgeKey == "vip")
+    {
+        return "V";
+    }
+    if (badgeKey == "staff")
+    {
+        return "S";
+    }
+    if (badgeKey == "admin")
+    {
+        return "A";
+    }
+    if (badgeKey == "global_mod")
+    {
+        return "G";
+    }
+    if (badgeKey == "partner")
+    {
+        return "P";
+    }
+    if (badgeKey == "subscriber")
+    {
+        return "S";
+    }
+    if (badgeKey == "premium")
+    {
+        return "$";
+    }
+    if (badgeKey == "founder")
+    {
+        return "F";
+    }
+    if (badgeKey == "verified")
+    {
+        return "R";
+    }
+    if (badgeKey == "dev")
+    {
+        return "D";
+    }
+    const auto normalized = badgeKey.trimmed();
+    return normalized.isEmpty() ? "?" : normalized.left(1).toUpper();
+}
+
+QColor openEmoteAvatarCornerColor(const QString &badgeKey)
+{
+    if (badgeKey == "broadcaster")
+    {
+        return QColor("#e91916");
+    }
+    if (badgeKey == "moderator")
+    {
+        return QColor("#00ad03");
+    }
+    if (badgeKey == "vip")
+    {
+        return QColor("#d269ff");
+    }
+    if (badgeKey == "staff")
+    {
+        return QColor("#7f4bff");
+    }
+    if (badgeKey == "admin")
+    {
+        return QColor("#ff7a18");
+    }
+    if (badgeKey == "global_mod")
+    {
+        return QColor("#2ec9c2");
+    }
+    if (badgeKey == "partner")
+    {
+        return QColor("#2b7fff");
+    }
+    if (badgeKey == "subscriber")
+    {
+        return QColor("#8f6cff");
+    }
+    if (badgeKey == "premium")
+    {
+        return QColor("#00b894");
+    }
+    if (badgeKey == "founder")
+    {
+        return QColor("#f3b33d");
+    }
+    if (badgeKey == "verified")
+    {
+        return QColor("#1f9bff");
+    }
+    if (badgeKey == "dev")
+    {
+        return QColor("#f3b33d");
+    }
+    return QColor("#7f7f7f");
+}
+
+std::vector<std::pair<QString, QColor>> collectOpenEmoteAvatarCornerBadges(
+    const QVariantMap &tags)
+{
+    std::vector<std::pair<QString, QColor>> cornerBadges;
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return cornerBadges;
+    }
+
+    if (!getSettings()->openEmoteAvatarCornerBadges)
+    {
+        return cornerBadges;
+    }
+
+    const auto maxBadges = std::clamp(
+        getSettings()->openEmoteAvatarCornerBadgeMax.getValue(), 1, 4);
+
+    QSet<QString> activeBadgeKeys;
+    auto addBadgeKey = [&activeBadgeKeys](const QString &rawKey) {
+        const auto key = rawKey.trimmed().toLower();
+        if (key.isEmpty())
+        {
+            return;
+        }
+        activeBadgeKeys.insert(key);
+    };
+
+    for (const auto &badge : parseBadgeTag(tags))
+    {
+        addBadgeKey(badge.key_);
+    }
+
+    const auto explicitVerified =
+        tags.value("openemote-verified").toString().trimmed();
+    if (explicitVerified == "1" ||
+        explicitVerified.compare("true", Qt::CaseInsensitive) == 0)
+    {
+        addBadgeKey("verified");
+    }
+
+    QString channelBadgeOverride;
+    QString subBadgeOverride;
+    QStringList customBadges;
+
+    const auto addCustomBadge = [&customBadges](const QString &rawBadge) {
+        const auto badge = rawBadge.trimmed().toLower();
+        if (badge.isEmpty() || customBadges.contains(badge, Qt::CaseInsensitive))
+        {
+            return;
+        }
+        customBadges.push_back(badge);
+    };
+
+    static const QStringList CHANNEL_STATUS_ORDER = {
+        "broadcaster", "staff", "admin", "global_mod", "moderator", "vip",
+        "partner",
+    };
+    static const QStringList SUB_STATUS_ORDER = {"subscriber", "premium",
+                                                 "founder"};
+
+    auto isChannelStatus = [](const QString &key) {
+        return CHANNEL_STATUS_ORDER.contains(key, Qt::CaseInsensitive);
+    };
+    auto isSubStatus = [](const QString &key) {
+        return SUB_STATUS_ORDER.contains(key, Qt::CaseInsensitive);
+    };
+
+    for (const auto &token :
+         parseTagString(tags.value("openemote-badges").toString())
+             .split(',', Qt::SkipEmptyParts))
+    {
+        const auto [packId, badgeName] = parseOpenEmoteBadgeToken(token);
+        Q_UNUSED(packId);
+        const auto key = badgeName.trimmed().toLower();
+        if (key.isEmpty())
+        {
+            continue;
+        }
+
+        if (key == "verified")
+        {
+            addBadgeKey(key);
+            continue;
+        }
+        if (key == "dev")
+        {
+            addBadgeKey(key);
+            continue;
+        }
+
+        if (isChannelStatus(key))
+        {
+            channelBadgeOverride = key;
+            continue;
+        }
+        if (isSubStatus(key))
+        {
+            subBadgeOverride = key;
+            continue;
+        }
+
+        addCustomBadge(key);
+    }
+
+    QString channelBadgeKey = channelBadgeOverride;
+    if (channelBadgeKey.isEmpty())
+    {
+        for (const auto &key : CHANNEL_STATUS_ORDER)
+        {
+            if (activeBadgeKeys.contains(key))
+            {
+                channelBadgeKey = key;
+                break;
+            }
+        }
+    }
+
+    QString subBadgeKey = subBadgeOverride;
+    if (subBadgeKey.isEmpty())
+    {
+        for (const auto &key : SUB_STATUS_ORDER)
+        {
+            if (activeBadgeKeys.contains(key))
+            {
+                subBadgeKey = key;
+                break;
+            }
+        }
+    }
+
+    const auto appendBadge = [&cornerBadges, maxBadges](const QString &key) {
+        const auto normalized = key.trimmed().toLower();
+        if (normalized.isEmpty())
+        {
+            return;
+        }
+        if (int(cornerBadges.size()) >= maxBadges)
+        {
+            return;
+        }
+        cornerBadges.emplace_back(openEmoteAvatarCornerLabel(normalized),
+                                  openEmoteAvatarCornerColor(normalized));
+    };
+
+    // Order is intentionally fixed (not user reorderable):
+    // 1) channel status, 2) sub status, 3-4) custom badges
+    appendBadge(channelBadgeKey);
+    appendBadge(subBadgeKey);
+    for (const auto &custom : customBadges)
+    {
+        appendBadge(custom);
+    }
+
+    // Fallback slots (when available) keep stable ordering.
+    if (int(cornerBadges.size()) < maxBadges)
+    {
+        if (activeBadgeKeys.contains("verified"))
+        {
+            appendBadge("verified");
+        }
+        if (activeBadgeKeys.contains("dev") ||
+            activeBadgeKeys.contains("founder"))
+        {
+            appendBadge("dev");
+        }
+    }
+
+    return cornerBadges;
+}
+
+bool openEmoteBadgePackAllowed(const QString &packId,
+                               bool allowUntrustedBadgePacks,
+                               const QStringList &allowlist)
+{
+    if (packId.isEmpty() || allowUntrustedBadgePacks)
+    {
+        return true;
+    }
+
+    return allowlist.contains(packId, Qt::CaseInsensitive);
+}
+
+OpenEmoteIdentityMetrics appendOpenEmoteCompactRoleBadges(
+    MessageBuilder *builder, const QVariantMap &tags,
+    TwitchChannel *twitchChannel)
+{
+    OpenEmoteIdentityMetrics metrics;
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return metrics;
+    }
+
+    QStringList renderedStatusBadges;
+    bool hasVerified = false;
+    bool hasDev = false;
+    std::vector<std::pair<QString, QString>> customBadges;
+
+    auto appendTwitchStatusBadge = [&](const TwitchBadge &badge,
+                                       const QString &tooltip) -> bool {
+        const auto key = badge.key_.trimmed().toLower();
+        if (key.isEmpty() ||
+            renderedStatusBadges.contains(key, Qt::CaseInsensitive))
+        {
+            return false;
+        }
+
+        if (auto badgeEmote = getTwitchBadge(badge, twitchChannel))
+        {
+            builder->emplace<BadgeElement>(*badgeEmote, badge.flag_)
+                ->setTooltip(tooltip);
+            renderedStatusBadges.append(key);
+            metrics.statusBadgeCount++;
+            return true;
+        }
+        return false;
+    };
+
+    bool statusBadgeRendered = false;
+    bool membershipBadgeRendered = false;
+    const auto twitchBadges = parseBadgeTag(tags);
+    for (const auto &badge : twitchBadges)
+    {
+        const auto key = badge.key_.trimmed().toLower();
+        if (!statusBadgeRendered && key == "broadcaster")
+        {
+            statusBadgeRendered = appendTwitchStatusBadge(badge, "Broadcaster");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "moderator")
+        {
+            statusBadgeRendered = appendTwitchStatusBadge(badge, "Moderator");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "vip")
+        {
+            statusBadgeRendered = appendTwitchStatusBadge(badge, "VIP");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "staff")
+        {
+            statusBadgeRendered =
+                appendTwitchStatusBadge(badge, "Twitch Staff");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "admin")
+        {
+            statusBadgeRendered =
+                appendTwitchStatusBadge(badge, "Twitch Admin");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "global_mod")
+        {
+            statusBadgeRendered =
+                appendTwitchStatusBadge(badge, "Global Moderator");
+            continue;
+        }
+
+        if (!statusBadgeRendered && key == "partner")
+        {
+            statusBadgeRendered = appendTwitchStatusBadge(badge, "Partner");
+            continue;
+        }
+
+        if (!membershipBadgeRendered && key == "founder")
+        {
+            membershipBadgeRendered = appendTwitchStatusBadge(badge, "Founder");
+            continue;
+        }
+
+        if (!membershipBadgeRendered && key == "subscriber")
+        {
+            membershipBadgeRendered =
+                appendTwitchStatusBadge(badge, "Subscriber");
+            continue;
+        }
+
+        if (!hasVerified && key == "verified")
+        {
+            hasVerified = true;
+            continue;
+        }
+
+        if (!hasDev && key == "dev")
+        {
+            hasDev = true;
+        }
+
+        if (statusBadgeRendered && membershipBadgeRendered)
+        {
+            break;
+        }
+    }
+
+    const bool enableCustomBadgePacks =
+        getSettings()->openEmoteEnableCustomBadgePacks;
+    const bool allowUntrustedBadgePacks =
+        getSettings()->openEmoteAllowUntrustedBadgePacks;
+    const auto configuredPackIds = openEmoteConfiguredBadgePackIds();
+    const auto explicitVerified =
+        tags.value("openemote-verified").toString().trimmed();
+    if (explicitVerified == "1" ||
+        explicitVerified.compare("true", Qt::CaseInsensitive) == 0)
+    {
+        hasVerified = true;
+    }
+
+    for (const auto &token :
+         parseTagString(tags.value("openemote-badges").toString())
+             .split(',', Qt::SkipEmptyParts))
+    {
+        const auto [packId, badgeName] = parseOpenEmoteBadgeToken(token);
+        if (badgeName.compare("verified", Qt::CaseInsensitive) == 0)
+        {
+            hasVerified = true;
+            continue;
+        }
+
+        if (badgeName.compare("dev", Qt::CaseInsensitive) == 0)
+        {
+            hasDev = true;
+            continue;
+        }
+
+        if (!enableCustomBadgePacks || badgeName.isEmpty() ||
+            !openEmoteBadgePackAllowed(packId, allowUntrustedBadgePacks,
+                                       configuredPackIds))
+        {
+            continue;
+        }
+
+        const auto normalizedBadge = badgeName.simplified().left(12).toUpper();
+        if (normalizedBadge.isEmpty())
+        {
+            continue;
+        }
+
+        const auto alreadyPresent = std::any_of(
+            customBadges.begin(), customBadges.end(),
+            [&normalizedBadge](const auto &entry) {
+                return entry.first.compare(normalizedBadge,
+                                           Qt::CaseInsensitive) == 0;
+            });
+        if (alreadyPresent)
+        {
+            continue;
+        }
+
+        customBadges.emplace_back(normalizedBadge, packId);
+    }
+
+    if (hasVerified)
+    {
+        builder
+            ->emplace<TextElement>("VERIFIED", MessageElementFlag::BadgeVanity,
+                                   MessageColor::System,
+                                   FontStyle::ChatMediumSmall)
+            ->setTooltip("OpenEmote verified identity (Twitch OAuth)");
+        metrics.textBadgeCount++;
+    }
+
+    if (hasDev)
+    {
+        builder
+            ->emplace<TextElement>("DEV", MessageElementFlag::BadgeVanity,
+                                   MessageColor::System,
+                                   FontStyle::ChatMediumSmall)
+            ->setTooltip("OpenEmote dev");
+        metrics.textBadgeCount++;
+    }
+
+    constexpr size_t MAX_CUSTOM_BADGES = 3;
+    for (size_t i = 0; i < customBadges.size() && i < MAX_CUSTOM_BADGES; i++)
+    {
+        const auto &[badgeLabel, packId] = customBadges.at(i);
+        const auto tooltip = packId.isEmpty()
+                                 ? QString("OpenEmote custom badge")
+                                 : QString("OpenEmote badge pack: %1")
+                                       .arg(packId);
+        builder
+            ->emplace<TextElement>(badgeLabel, MessageElementFlag::BadgeVanity,
+                                   MessageColor::System,
+                                   FontStyle::ChatMediumSmall)
+            ->setTooltip(tooltip);
+        metrics.textBadgeCount++;
+    }
+
+    return metrics;
+}
+
+void appendOpenEmoteIdentityRailSpacer(
+    MessageBuilder *builder, const OpenEmoteIdentityMetrics &metrics)
+{
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return;
+    }
+
+    if (!getSettings()->openEmoteIdentityRailEnabled)
+    {
+        return;
+    }
+
+    const auto railWidth =
+        std::clamp(getSettings()->openEmoteIdentityRailWidth.getValue(), 48, 180);
+    const auto minRowHeight = std::clamp(
+        getSettings()->openEmoteIdentityRailMinRowHeight.getValue(), 16, 40);
+
+    constexpr int AVATAR_WIDTH = 20;
+    constexpr int STATUS_BADGE_WIDTH = 18;
+    constexpr int TEXT_BADGE_WIDTH = 16;
+    const auto usedWidth = AVATAR_WIDTH +
+                           (metrics.statusBadgeCount * STATUS_BADGE_WIDTH) +
+                           (metrics.textBadgeCount * TEXT_BADGE_WIDTH);
+    const auto spacerWidth = std::max(0, railWidth - usedWidth);
+
+    builder->emplace<FixedSpaceElement>(
+        float(spacerWidth), float(minRowHeight),
+        MessageElementFlags({MessageElementFlag::Username,
+                             MessageElementFlag::BadgeVanity,
+                             MessageElementFlag::ReplyButton,
+                             MessageElementFlag::Text}));
+}
+
+void appendOpenEmoteAvatarDecorators(MessageBuilder *builder,
+                                     const QVariantMap &tags)
+{
+    if (getSettings()->openEmoteBotCompatibilityMode.getValue())
+    {
+        return;
+    }
+
+    QStringList decorators;
+    auto addDecorator = [&decorators](const QString &decorator) {
+        auto value = decorator.trimmed();
+        if (value.isEmpty())
+        {
+            return;
+        }
+        if (value.compare("founder", Qt::CaseInsensitive) == 0)
+        {
+            value = "dev";
+        }
+        if (decorators.contains(value, Qt::CaseInsensitive))
+        {
+            return;
+        }
+        decorators.append(value.toUpper());
+    };
+
+    for (const auto &token :
+         parseTagString(tags.value("openemote-decorators").toString())
+             .split(',', Qt::SkipEmptyParts))
+    {
+        addDecorator(token.left(12));
+    }
+
+    for (const auto &token :
+         parseTagString(tags.value("openemote-badges").toString())
+             .split(',', Qt::SkipEmptyParts))
+    {
+        addDecorator(token.left(12));
+    }
+
+    constexpr int MAX_DECORATORS = 3;
+    for (int i = 0; i < decorators.size() && i < MAX_DECORATORS; i++)
+    {
+        const auto &decorator = decorators.at(i);
+        builder
+            ->emplace<TextElement>(QString("[%1]").arg(decorator),
+                                   MessageElementFlag::Username,
+                                   MessageColor::System,
+                                   FontStyle::ChatMediumSmall)
+            ->setTooltip(QString("Avatar decorator: %1").arg(decorator));
+    }
+}
+
+void appendOpenEmoteCompactReplyButton(
+    MessageBuilder *builder, const std::shared_ptr<MessageThread> &thread)
+{
+    if (thread)
+    {
+        if (!getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+            getSettings()->openEmoteShowThreadActivityIndicator)
+        {
+            const auto replies = thread->liveCount();
+            if (replies > 0)
+            {
+                builder
+                    ->emplace<TextElement>(u"•"_s, MessageElementFlag::ReplyButton,
+                                           MessageColor::System,
+                                           FontStyle::ChatMediumBold)
+                    ->setLink({Link::ViewThread, thread->rootId()})
+                    ->setTooltip(QString::number(replies));
+            }
+        }
+
+        auto &img = getResources().buttons.replyThreadDark;
+        builder
+            ->emplace<CircularImageElement>(
+                Image::fromResourcePixmap(img, 0.15), 2, Qt::gray,
+                MessageElementFlag::ReplyButton)
+            ->setLink({Link::ViewThread, thread->rootId()})
+            ->setTooltip("View reply thread");
+    }
+    else
+    {
+        auto &img = getResources().buttons.replyDark;
+        builder
+            ->emplace<CircularImageElement>(
+                Image::fromResourcePixmap(img, 0.15), 2, Qt::gray,
+                MessageElementFlag::ReplyButton)
+            ->setLink({Link::ReplyToMessage, builder->message().id})
+            ->setTooltip("Reply to message");
+    }
+}
+
+QString normalizeCrossChannelName(QString name)
+{
+    name = name.trimmed().toLower();
+    while (name.startsWith('#'))
+    {
+        name.remove(0, 1);
+    }
+    return name;
+}
+
+QSet<QString> parseCrossChannelSet(const QString &csv)
+{
+    QSet<QString> set;
+    for (const auto &entry : csv.split(',', Qt::SkipEmptyParts))
+    {
+        auto normalized = normalizeCrossChannelName(entry);
+        if (!normalized.isEmpty())
+        {
+            set.insert(normalized);
+        }
+    }
+    return set;
+}
+
+bool isCrossChannelAllowed(const QString &sourceChannelName,
+                           const QSet<QString> &allowChannels,
+                           const QSet<QString> &blockChannels,
+                           bool allowlistOnly)
+{
+    if (sourceChannelName.isEmpty() || blockChannels.contains(sourceChannelName))
+    {
+        return false;
+    }
+
+    if (allowlistOnly)
+    {
+        return allowChannels.contains(sourceChannelName);
+    }
+
+    return true;
+}
+
+struct CrossChannelEmoteCache {
+    QHash<QString, EmotePtr> bttv;
+    QHash<QString, EmotePtr> ffz;
+    QHash<QString, EmotePtr> seventv;
+    QString signature;
+    qint64 builtAtMs = 0;
+};
+
+CrossChannelEmoteCache &crossChannelEmoteCache()
+{
+    static CrossChannelEmoteCache cache;
+    return cache;
+}
+
+QString crossChannelEmoteCacheSignature()
+{
+    const auto *settings = getSettings();
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(settings->openEmoteEnableCrossChannelEmotes.getValue() ? "1"
+                                                                     : "0")
+        .arg(settings->openEmoteCrossChannelEmotesAllowlistMode.getValue()
+                 ? "1"
+                 : "0")
+        .arg(settings->openEmoteCrossChannelEmotesAllowChannels.getValue())
+        .arg(settings->openEmoteCrossChannelEmotesBlockChannels.getValue());
+}
+
+CrossChannelEmoteCache &getCrossChannelEmoteCache()
+{
+    constexpr qint64 TTL_MS = 5000;
+
+    auto &cache = crossChannelEmoteCache();
+    const auto signature = crossChannelEmoteCacheSignature();
+    const auto now = QDateTime::currentMSecsSinceEpoch();
+
+    if (cache.signature == signature && (now - cache.builtAtMs) < TTL_MS)
+    {
+        return cache;
+    }
+
+    cache.bttv.clear();
+    cache.ffz.clear();
+    cache.seventv.clear();
+    cache.signature = signature;
+    cache.builtAtMs = now;
+
+    if (!getSettings()->openEmoteEnableCrossChannelEmotes.getValue())
+    {
+        return cache;
+    }
+
+    const bool allowlistOnly =
+        getSettings()->openEmoteCrossChannelEmotesAllowlistMode.getValue();
+    const auto allowChannels = parseCrossChannelSet(
+        getSettings()->openEmoteCrossChannelEmotesAllowChannels);
+    const auto blockChannels = parseCrossChannelSet(
+        getSettings()->openEmoteCrossChannelEmotesBlockChannels);
+
+    auto mergeInto = [](const EmoteMap &map, QHash<QString, EmotePtr> &out) {
+        for (const auto &entry : map)
+        {
+            if (!out.contains(entry.first.string))
+            {
+                out.insert(entry.first.string, entry.second);
+            }
+        }
+    };
+
+    getApp()->getTwitch()->forEachChannel([&](const auto &channel) {
+        auto *twitchChannel = dynamic_cast<TwitchChannel *>(channel.get());
+        if (twitchChannel == nullptr)
+        {
+            return;
+        }
+
+        const auto sourceChannelName =
+            normalizeCrossChannelName(twitchChannel->getName());
+        if (!isCrossChannelAllowed(sourceChannelName, allowChannels,
+                                   blockChannels, allowlistOnly))
+        {
+            return;
+        }
+
+        if (auto bttv = twitchChannel->bttvEmotes())
+        {
+            mergeInto(*bttv, cache.bttv);
+        }
+        if (auto ffz = twitchChannel->ffzEmotes())
+        {
+            mergeInto(*ffz, cache.ffz);
+        }
+        if (auto seventv = twitchChannel->seventvEmotes())
+        {
+            mergeInto(*seventv, cache.seventv);
+        }
+    });
+
+    return cache;
+}
+
 EmotePtr parseEmote(TwitchChannel *twitchChannel, const EmoteName &name)
 {
     // Emote order:
@@ -513,6 +1696,29 @@ EmotePtr parseEmote(TwitchChannel *twitchChannel, const EmoteName &name)
     if (emote)
     {
         return *emote;
+    }
+
+    if (getSettings()->openEmoteEnableCrossChannelEmotes.getValue())
+    {
+        const auto &crossCache = getCrossChannelEmoteCache();
+
+        const auto ffzIt = crossCache.ffz.constFind(name.string);
+        if (ffzIt != crossCache.ffz.cend())
+        {
+            return ffzIt.value();
+        }
+
+        const auto bttvIt = crossCache.bttv.constFind(name.string);
+        if (bttvIt != crossCache.bttv.cend())
+        {
+            return bttvIt.value();
+        }
+
+        const auto seventvIt = crossCache.seventv.constFind(name.string);
+        if (seventvIt != crossCache.seventv.cend())
+        {
+            return seventvIt.value();
+        }
     }
 
     return {};
@@ -1647,7 +2853,7 @@ std::pair<MessagePtrMut, HighlightAlert> MessageBuilder::makeIrcMessage(
 
     // timestamp
     builder->serverReceivedTime = calculateMessageTime(ircMessage);
-    builder.emplace<TimestampElement>(builder->serverReceivedTime.time());
+    parseOpenEmoteAvatarModelMetadata(&builder, tags, content);
 
     bool shouldAddModerationElements = [&] {
         if (senderIsBroadcaster)
@@ -1670,14 +2876,121 @@ std::pair<MessagePtrMut, HighlightAlert> MessageBuilder::makeIrcMessage(
         builder.emplace<TwitchModerationElement>();
     }
 
-    builder.appendTwitchBadges(tags, twitchChannel);
+    const bool compactAuthorMode =
+        !getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+        getSettings()->openEmoteCompactAuthorAvatar && !args.isSentWhisper &&
+        false &&
+        !args.isReceivedWhisper;
+    const bool compactHeaderLayout =
+        !getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+        getSettings()->openEmoteCompactHeaderLayout.getValue() &&
+        !args.isSentWhisper && !args.isReceivedWhisper && !args.isAction;
+    OpenEmoteIdentityMetrics compactIdentityMetrics;
+    if (compactAuthorMode)
+    {
+        builder.message().twitchBadges = parseBadgeTag(tags);
+        builder.message().twitchBadgeInfos = parseBadgeInfoTag(tags);
+    }
+    else
+    {
+        builder.appendTwitchBadges(tags, twitchChannel);
+        builder.appendChatterinoBadges(userID);
+        builder.appendFfzBadges(twitchChannel, userID);
+        builder.appendBttvBadges(userID);
+        builder.appendSeventvBadges(userID);
+    }
 
-    builder.appendChatterinoBadges(userID);
-    builder.appendFfzBadges(twitchChannel, userID);
-    builder.appendBttvBadges(userID);
-    builder.appendSeventvBadges(userID);
+    if (compactAuthorMode)
+    {
+        compactIdentityMetrics =
+            appendOpenEmoteCompactRoleBadges(&builder, tags, twitchChannel);
+    }
+    if (compactHeaderLayout)
+    {
+        const auto authorText =
+            stylizeUsername(builder->loginName, builder.message());
+        builder
+            .emplace<TextElement>(authorText, MessageElementFlag::RepliedMessage,
+                                  builder.usernameColor_,
+                                  FontStyle::ChatMediumSmall)
+            ->setLink({Link::UserInfo, builder.message().displayName});
 
-    builder.appendUsername(tags, args);
+        if (thread)
+        {
+            auto threadRoot = parent ? parent : thread->root();
+            if (threadRoot)
+            {
+                const auto targetText =
+                    stylizeUsername(threadRoot->loginName, *threadRoot);
+                builder.emplace<TextElement>(" -> ",
+                                             MessageElementFlag::RepliedMessage,
+                                             MessageColor::System,
+                                             FontStyle::ChatMediumSmall);
+                builder
+                    .emplace<TextElement>(
+                        targetText, MessageElementFlag::RepliedMessage,
+                        threadRoot->usernameColor, FontStyle::ChatMediumSmall)
+                    ->setLink({Link::UserInfo, threadRoot->displayName});
+                builder.emplace<TextElement>(": ",
+                                             MessageElementFlag::RepliedMessage,
+                                             MessageColor::System,
+                                             FontStyle::ChatMediumSmall);
+                builder
+                    .emplace<SingleLineTextElement>(
+                        threadRoot->messageText,
+                        MessageElementFlags(
+                            {MessageElementFlag::RepliedMessage,
+                             MessageElementFlag::Text}),
+                        MessageColor::Text, FontStyle::ChatMediumSmall)
+                    ->setLink({Link::ViewThread, thread->rootId()});
+            }
+        }
+        else if (auto replyNameIt = tags.find("reply-parent-display-name");
+                 replyNameIt != tags.end())
+        {
+            const auto targetText = parseTagString(replyNameIt->toString());
+            const auto body = parseTagString(
+                tags.value("reply-parent-msg-body").toString());
+            if (!targetText.isEmpty())
+            {
+                builder.emplace<TextElement>(" -> ",
+                                             MessageElementFlag::RepliedMessage,
+                                             MessageColor::System,
+                                             FontStyle::ChatMediumSmall);
+                builder.emplace<TextElement>(targetText,
+                                             MessageElementFlag::RepliedMessage,
+                                             MessageColor::Text,
+                                             FontStyle::ChatMediumSmall);
+                if (!body.isEmpty())
+                {
+                    builder.emplace<TextElement>(
+                        ": ", MessageElementFlag::RepliedMessage,
+                        MessageColor::System, FontStyle::ChatMediumSmall);
+                    builder.emplace<SingleLineTextElement>(
+                        body,
+                        MessageElementFlags(
+                            {MessageElementFlag::RepliedMessage,
+                             MessageElementFlag::Text}),
+                        MessageColor::Text, FontStyle::ChatMediumSmall);
+                }
+            }
+        }
+    }
+
+    if (!compactHeaderLayout)
+    {
+        builder.appendUsername(tags, args);
+    }
+
+    if (compactAuthorMode && !args.isAction &&
+        tags.value("msg-id") != "announcement")
+    {
+        appendOpenEmoteCompactReplyButton(&builder, thread);
+    }
+    if (compactAuthorMode)
+    {
+        appendOpenEmoteIdentityRailSpacer(&builder, compactIdentityMetrics);
+    }
 
     TextState textState{.twitchChannel = twitchChannel};
     QString bits;
@@ -1738,8 +3051,24 @@ std::pair<MessagePtrMut, HighlightAlert> MessageBuilder::makeIrcMessage(
 
     if (!args.isReceivedWhisper && tags.value("msg-id") != "announcement")
     {
-        if (thread)
+        if (!compactAuthorMode && !compactHeaderLayout && thread)
         {
+            if (!getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+                getSettings()->openEmoteShowThreadActivityIndicator)
+            {
+                const auto replies = thread->liveCount();
+                if (replies > 0)
+                {
+                    builder
+                        .emplace<TextElement>(u"•"_s,
+                                              MessageElementFlag::ReplyButton,
+                                              MessageColor::System,
+                                              FontStyle::ChatMediumBold)
+                        ->setLink({Link::ViewThread, thread->rootId()})
+                        ->setTooltip(QString::number(replies));
+                }
+            }
+
             auto &img = getResources().buttons.replyThreadDark;
             builder
                 .emplace<CircularImageElement>(
@@ -1747,15 +3076,22 @@ std::pair<MessagePtrMut, HighlightAlert> MessageBuilder::makeIrcMessage(
                     MessageElementFlag::ReplyButton)
                 ->setLink({Link::ViewThread, thread->rootId()});
         }
-        else
+        else if (!compactAuthorMode && !compactHeaderLayout)
         {
             auto &img = getResources().buttons.replyDark;
             builder
                 .emplace<CircularImageElement>(
                     Image::fromResourcePixmap(img, 0.15), 2, Qt::gray,
                     MessageElementFlag::ReplyButton)
-                ->setLink({Link::ReplyToMessage, builder->id});
+                ->setLink({Link::ReplyToMessage, builder.message().id});
         }
+    }
+
+    // Keep timestamp on the right side of the author/reply header section.
+    if (shouldRenderOpenEmoteTimestamp(channel, builder.message(),
+                                       builder->serverReceivedTime))
+    {
+        builder.emplace<TimestampElement>(builder->serverReceivedTime.time());
     }
 
     return {builder.release(), highlight};
@@ -2035,6 +3371,9 @@ void MessageBuilder::parseThread(const QString &messageContent,
                                  const std::shared_ptr<MessageThread> &thread,
                                  const MessagePtr &parent)
 {
+    const bool compactHeaderLayout =
+        getSettings()->openEmoteCompactHeaderLayout.getValue();
+
     if (thread)
     {
         // set references
@@ -2049,6 +3388,21 @@ void MessageBuilder::parseThread(const QString &messageContent,
 
         // enable reply flag
         this->message().flags.set(MessageFlag::ReplyMessage);
+
+        if (compactHeaderLayout)
+        {
+            return;
+        }
+
+        if (!getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+            getSettings()->openEmoteCompactAuthorAvatar && false)
+        {
+            appendOpenEmoteAuthorAvatarElement(
+                this, tags,
+                MessageElementFlags({MessageElementFlag::RepliedMessage,
+                                     MessageElementFlag::Username}),
+                26.F, false);
+        }
 
         MessagePtr threadRoot;
         if (!parent)
@@ -2092,6 +3446,11 @@ void MessageBuilder::parseThread(const QString &messageContent,
     }
     else if (tags.find("reply-parent-msg-id") != tags.end())
     {
+        if (compactHeaderLayout)
+        {
+            return;
+        }
+
         // Message is a reply but we couldn't find the original message.
         // Render the message using the additional reply tags
 
@@ -2220,6 +3579,41 @@ void MessageBuilder::appendUsername(const QVariantMap &tags,
 
     QString usernameText = stylizeUsername(username, this->message());
 
+    const bool compactAvatarMode =
+        !getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+        getSettings()->openEmoteCompactAuthorAvatar && !args.isSentWhisper &&
+        false &&
+        !args.isReceivedWhisper;
+    const bool keepVisibleNames = getSettings()->openEmoteCompactAvatarKeepNames;
+    if (compactAvatarMode)
+    {
+        bool avatarRendered = false;
+        const bool avatarHandledInReplyContext =
+            this->message().flags.has(MessageFlag::ReplyMessage);
+        if (!avatarHandledInReplyContext)
+        {
+            avatarRendered = appendOpenEmoteAuthorAvatarElement(
+                this, tags, MessageElementFlag::Username, 18.F, true);
+            if (avatarRendered && !keepVisibleNames)
+            {
+                return;
+            }
+        }
+        else
+        {
+            if (!getSettings()->openEmoteBotCompatibilityMode.getValue() &&
+                getSettings()->openEmoteAvatarDecorators)
+            {
+                appendOpenEmoteAvatarDecorators(this, tags);
+                avatarRendered = true;
+            }
+            if (avatarRendered && !keepVisibleNames)
+            {
+                return;
+            }
+        }
+    }
+
     if (args.isSentWhisper)
     {
         // TODO(pajlada): Re-implement
@@ -2267,6 +3661,8 @@ Outcome MessageBuilder::tryAppendEmote(TwitchChannel *twitchChannel,
                                        const EmoteName &name)
 {
     auto emote = parseEmote(twitchChannel, name);
+    const auto emoteScaleMultiplier =
+        openEmoteChannelScaleForChannel(twitchChannel);
 
     if (!emote)
     {
@@ -2292,7 +3688,7 @@ Outcome MessageBuilder::tryAppendEmote(TwitchChannel *twitchChannel,
             this->emplace<LayeredEmoteElement>(
                 std::move(layers),
                 baseEmoteElement->getFlags() | MessageElementFlag::Emote,
-                this->textColor_);
+                this->textColor_, emoteScaleMultiplier);
             return Success;
         }
 
@@ -2308,7 +3704,7 @@ Outcome MessageBuilder::tryAppendEmote(TwitchChannel *twitchChannel,
     }
 
     this->emplace<EmoteElement>(emote, MessageElementFlag::Emote,
-                                this->textColor_);
+                                this->textColor_, emoteScaleMultiplier);
     return Success;
 }
 
@@ -2319,6 +3715,8 @@ void MessageBuilder::addWords(
     // cursor currently indicates what character index we're currently operating in the full list of words
     int cursor = 0;
     auto currentTwitchEmoteIt = twitchEmotes.begin();
+    const auto emoteScaleMultiplier =
+        openEmoteChannelScaleForChannel(state.twitchChannel);
 
     for (auto word : words)
     {
@@ -2338,7 +3736,8 @@ void MessageBuilder::addWords(
                 // This emote exists right at the start of the word!
                 this->emplace<EmoteElement>(currentTwitchEmote.ptr,
                                             MessageElementFlag::Emote,
-                                            this->textColor_);
+                                            this->textColor_,
+                                            emoteScaleMultiplier);
 
                 auto len = currentTwitchEmote.name.string.length();
                 cursor += len;
@@ -2560,17 +3959,21 @@ Outcome MessageBuilder::tryAppendCheermote(TextState &state,
         {
             return Success;
         }
+        const auto emoteScaleMultiplier =
+            openEmoteChannelScaleForChannel(state.twitchChannel);
         if (cheerEmote.staticEmote)
         {
             this->emplace<EmoteElement>(cheerEmote.staticEmote,
                                         MessageElementFlag::BitsStatic,
-                                        this->textColor_);
+                                        this->textColor_,
+                                        emoteScaleMultiplier);
         }
         if (cheerEmote.animatedEmote)
         {
             this->emplace<EmoteElement>(cheerEmote.animatedEmote,
                                         MessageElementFlag::BitsAnimated,
-                                        this->textColor_);
+                                        this->textColor_,
+                                        emoteScaleMultiplier);
         }
         if (cheerEmote.color != QColor())
         {
@@ -2595,17 +3998,19 @@ Outcome MessageBuilder::tryAppendCheermote(TextState &state,
         return this->tryAppendCheermote(state, newString);
     }
 
+    const auto emoteScaleMultiplier =
+        openEmoteChannelScaleForChannel(state.twitchChannel);
     if (cheerEmote.staticEmote)
     {
         this->emplace<EmoteElement>(cheerEmote.staticEmote,
                                     MessageElementFlag::BitsStatic,
-                                    this->textColor_);
+                                    this->textColor_, emoteScaleMultiplier);
     }
     if (cheerEmote.animatedEmote)
     {
         this->emplace<EmoteElement>(cheerEmote.animatedEmote,
                                     MessageElementFlag::BitsAnimated,
-                                    this->textColor_);
+                                    this->textColor_, emoteScaleMultiplier);
     }
     if (cheerEmote.color != QColor())
     {

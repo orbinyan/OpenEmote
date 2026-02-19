@@ -461,6 +461,9 @@ CommandController::CommandController(const Paths &paths)
     {
         this->registerCommand(cmd, &commands::sendWhisper);
     }
+    this->registerCommand("/gw", &commands::sendGroupWhisper);
+    this->registerCommand("/gwhisper", &commands::sendGroupWhisper);
+    this->registerCommand("/groupwhisper", &commands::sendGroupWhisper);
 
     this->registerCommand("/vips", &commands::getVIPs);
 

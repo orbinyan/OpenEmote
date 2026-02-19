@@ -7,6 +7,7 @@
 #include "Application.hpp"
 #include "common/Channel.hpp"
 #include "common/Common.hpp"
+#include "common/Credentials.hpp"
 #include "common/Literals.hpp"
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
@@ -30,8 +31,10 @@
 #include "util/FormatTime.hpp"
 #include "util/Helpers.hpp"
 #include "util/IrcHelpers.hpp"
+#include "util/OpenEmoteSecureGroupWhisper.hpp"
 
 #include <IrcMessage>
+#include <QApplication>
 #include <QLocale>
 #include <QStringBuilder>
 
@@ -666,6 +669,66 @@ void IrcMessageHandler::handleUserStateMessage(Communi::IrcMessage *message)
 
 void IrcMessageHandler::handleWhisperMessage(Communi::IrcMessage *ircMessage)
 {
+    const auto rawContent = unescapeZeroWidthJoiner(ircMessage->parameter(1));
+    if (getSettings()->openEmoteEnableSecureGroupWhispers)
+    {
+        openemote::groupwhisper::EnvelopeParts envelope;
+        if (openemote::groupwhisper::parseEnvelope(rawContent, &envelope))
+        {
+            const auto tags = ircMessage->tags();
+            QString senderLogin = tags.value("login").toString().trimmed();
+            QString senderDisplay =
+                parseTagString(tags.value("display-name").toString()).trimmed();
+            if (senderDisplay.isEmpty())
+            {
+                senderDisplay = senderLogin;
+            }
+            if (senderDisplay.isEmpty())
+            {
+                senderDisplay = "unknown";
+            }
+
+            Credentials::instance().get(
+                "openemote",
+                openemote::groupwhisper::credentialNameForGroup(
+                    envelope.group),
+                QApplication::instance(),
+                [envelope = std::move(envelope), senderLogin, senderDisplay](
+                    const QString &secret) {
+                    QString plaintext;
+                    if (!openemote::groupwhisper::decodeEnvelope(
+                            envelope, secret, &plaintext))
+                    {
+                        getApp()->getTwitch()->getWhispersChannel()->addSystemMessage(
+                            QStringLiteral(
+                                "Locked group whisper for \"%1\" could not be decrypted. "
+                                "Use /gw key %1 <secret>.")
+                                .arg(envelope.group));
+                        return;
+                    }
+
+                    auto targetChannel =
+                        getApp()->getTwitch()->getChannelOrEmpty(
+                            envelope.channel);
+                    if (targetChannel->isEmpty())
+                    {
+                        targetChannel =
+                            getApp()->getTwitch()->getWhispersChannel();
+                    }
+
+                    openemote::groupwhisper::appendThreadMessage(
+                        targetChannel, envelope.group, senderDisplay, plaintext,
+                        false);
+                    if (!senderLogin.isEmpty())
+                    {
+                        getApp()->getTwitch()->setLastUserThatWhisperedMe(
+                            senderLogin);
+                    }
+                });
+            return;
+        }
+    }
+
     MessageParseArgs args;
 
     args.isReceivedWhisper = true;
@@ -673,8 +736,7 @@ void IrcMessageHandler::handleWhisperMessage(Communi::IrcMessage *ircMessage)
     auto *c = getApp()->getTwitch()->getWhispersChannel().get();
 
     auto [message, alert] = MessageBuilder::makeIrcMessage(
-        c, ircMessage, args, unescapeZeroWidthJoiner(ircMessage->parameter(1)),
-        0);
+        c, ircMessage, args, rawContent, 0);
     if (!message)
     {
         return;

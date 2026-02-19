@@ -7,11 +7,17 @@
 #include "Application.hpp"
 #include "common/enums/MessageOverflow.hpp"
 #include "common/QLogging.hpp"
+#include "controllers/accounts/AccountController.hpp"
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
 #include "controllers/spellcheck/SpellChecker.hpp"
+#include "messages/Emote.hpp"
 #include "messages/Link.hpp"
 #include "messages/Message.hpp"
+#include "providers/bttv/BttvEmotes.hpp"
+#include "providers/ffz/FfzEmotes.hpp"
+#include "providers/seventv/SeventvEmotes.hpp"
+#include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchChannel.hpp"
 #include "providers/twitch/TwitchCommon.hpp"
 #include "providers/twitch/TwitchIrcServer.hpp"
@@ -35,9 +41,13 @@
 #include "widgets/splits/SplitContainer.hpp"
 
 #include <QCompleter>
+#include <QFontMetrics>
+#include <QHash>
 #include <QPainter>
 #include <QSignalBlocker>
 
+#include <algorithm>
+#include <cmath>
 #include <functional>
 
 using namespace Qt::Literals;
@@ -54,6 +64,257 @@ qreal highlightEasingFunction(qreal progress)
         return 1.0 - pow(10.0 * progress, 3.0);
     }
     return 1.0 + pow((20.0 / 9.0) * (0.5 * progress - 0.5), 3.0);
+}
+
+float openEmoteChannelScaleForName(QStringView channelName)
+{
+    static QString cachedRaw;
+    static QHash<QString, float> cachedScales;
+
+    const auto raw =
+        getSettings()->openEmoteChannelEmoteScaleOverrides.getValue().trimmed();
+    if (cachedRaw != raw)
+    {
+        cachedRaw = raw;
+        cachedScales.clear();
+        for (const auto &entry : raw.split(',', Qt::SkipEmptyParts))
+        {
+            const auto parts = entry.split('=', Qt::SkipEmptyParts);
+            if (parts.size() != 2)
+            {
+                continue;
+            }
+
+            bool ok = false;
+            const auto value = parts[1].trimmed().toFloat(&ok);
+            if (!ok)
+            {
+                continue;
+            }
+
+            auto key = parts[0].trimmed().toLower();
+            if (key.startsWith('#'))
+            {
+                key.remove(0, 1);
+            }
+            if (key.isEmpty())
+            {
+                continue;
+            }
+            cachedScales.insert(key, value);
+        }
+    }
+
+    auto key = channelName.toString().trimmed().toLower();
+    if (key.startsWith('#'))
+    {
+        key.remove(0, 1);
+    }
+    if (key.isEmpty())
+    {
+        return 1.F;
+    }
+
+    return std::clamp(cachedScales.value(key, 1.F), 0.25F, 6.F);
+}
+
+float openEmoteChannelScaleForChannel(const TwitchChannel *channel)
+{
+    if (channel == nullptr)
+    {
+        return 1.F;
+    }
+    return openEmoteChannelScaleForName(channel->getName());
+}
+
+std::optional<EmotePtr> resolveOpenEmoteToken(const TwitchChannel *channel,
+                                              const QString &token)
+{
+    if (token.isEmpty())
+    {
+        return std::nullopt;
+    }
+
+    const auto emoteName = EmoteName{token};
+
+    if (channel != nullptr)
+    {
+        if (auto local = channel->localTwitchEmotes())
+        {
+            if (auto it = local->find(emoteName); it != local->end())
+            {
+                return it->second;
+            }
+        }
+
+        if (auto emote = channel->ffzEmote(emoteName))
+        {
+            return emote;
+        }
+        if (auto emote = channel->bttvEmote(emoteName))
+        {
+            return emote;
+        }
+        if (auto emote = channel->seventvEmote(emoteName))
+        {
+            return emote;
+        }
+    }
+
+    if (const auto account = getApp()->getAccounts()->twitch.getCurrent();
+        account)
+    {
+        if (auto emote = account->twitchEmote(emoteName))
+        {
+            return emote;
+        }
+    }
+
+    if (auto emote = getApp()->getFfzEmotes()->emote(emoteName))
+    {
+        return emote;
+    }
+    if (auto emote = getApp()->getBttvEmotes()->emote(emoteName))
+    {
+        return emote;
+    }
+    if (auto emote = getApp()->getSeventvEmotes()->globalEmote(emoteName))
+    {
+        return emote;
+    }
+
+    return std::nullopt;
+}
+
+QString normalizeOpenEmoteZeroWidthTags(const QString &message,
+                                        const TwitchChannel *channel)
+{
+    if (channel == nullptr || !getSettings()->enableZeroWidthEmotes)
+    {
+        return message;
+    }
+
+    QStringList out;
+    out.reserve(message.length() / 2);
+    bool hasBaseEmote = false;
+
+    for (const auto &rawToken : message.split(' ', Qt::SkipEmptyParts))
+    {
+        QString token = rawToken;
+        const bool taggedZeroWidth = token.startsWith('~') && token.length() > 1;
+        if (taggedZeroWidth)
+        {
+            token.remove(0, 1);
+        }
+
+        auto emote = resolveOpenEmoteToken(channel, token);
+        if (!emote)
+        {
+            out.push_back(rawToken);
+            hasBaseEmote = false;
+            continue;
+        }
+
+        if (emote.value()->zeroWidth && taggedZeroWidth && hasBaseEmote)
+        {
+            out.push_back(token);
+            continue;
+        }
+
+        out.push_back(rawToken);
+        hasBaseEmote = true;
+    }
+
+    return out.join(' ');
+}
+
+void normalizeOpenEmoteZeroWidthTagsInEditor(ResizingTextEdit *edit,
+                                             const TwitchChannel *channel)
+{
+    if (edit == nullptr || channel == nullptr ||
+        !getSettings()->enableZeroWidthEmotes)
+    {
+        return;
+    }
+
+    const auto original = edit->toPlainText();
+    if (!original.contains('~'))
+    {
+        return;
+    }
+
+    const auto normalized = normalizeOpenEmoteZeroWidthTags(original, channel);
+    if (normalized == original)
+    {
+        return;
+    }
+
+    auto cursor = edit->textCursor();
+    const int originalSize = original.size();
+    const int normalizedSize = normalized.size();
+    const int delta = normalizedSize - originalSize;
+    const int oldPos = cursor.position();
+
+    edit->setPlainText(normalized);
+
+    cursor = edit->textCursor();
+    cursor.setPosition(std::clamp(oldPos + delta, 0, normalizedSize));
+    edit->setTextCursor(cursor);
+}
+
+int openEmoteVisualLength(const QString &text, const ChannelPtr &channel,
+                          const QFont &font)
+{
+    if (text.isEmpty())
+    {
+        return 0;
+    }
+
+    const auto *twitchChannel = dynamic_cast<TwitchChannel *>(channel.get());
+    const auto emoteScale = getSettings()->emoteScale.getValue() *
+                            openEmoteChannelScaleForChannel(twitchChannel);
+    const int avgCharWidth =
+        std::max(1, QFontMetrics(font).horizontalAdvance(QLatin1Char('n')));
+    int visualUnits = 0;
+    bool hasBaseEmote = false;
+
+    for (const auto &rawToken : text.split(' ', Qt::KeepEmptyParts))
+    {
+        if (rawToken.isEmpty())
+        {
+            visualUnits += 1;
+            hasBaseEmote = false;
+            continue;
+        }
+
+        QString token = rawToken;
+        if (token.startsWith('~') && token.length() > 1)
+        {
+            token.remove(0, 1);
+        }
+
+        auto emote = resolveOpenEmoteToken(twitchChannel, token);
+        if (!emote)
+        {
+            visualUnits += rawToken.length();
+            hasBaseEmote = false;
+            continue;
+        }
+
+        if (emote.value()->zeroWidth && hasBaseEmote)
+        {
+            continue;
+        }
+
+        auto image = emote.value()->images.getImage(1.F);
+        auto widthPx = image != nullptr ? image->size().width() : 18.F;
+        const auto widthUnits = static_cast<int>(
+            std::ceil((widthPx * emoteScale) / static_cast<float>(avgCharWidth)));
+        visualUnits += std::max(1, widthUnits);
+        hasBaseEmote = true;
+    }
+
+    return visualUnits;
 }
 
 }  // namespace
@@ -104,6 +365,11 @@ SplitInput::SplitInput(QWidget *parent, Split *_chatWidget,
     // destroyed, so we can safely ignore this signal's connection.
     std::ignore = this->ui_.textEdit->focusLost.connect([this] {
         this->hideCompletionPopup();
+    });
+    std::ignore = this->ui_.textEdit->completionInserted.connect([this] {
+        auto *channel = dynamic_cast<TwitchChannel *>(
+            this->split_->getChannel().get());
+        normalizeOpenEmoteZeroWidthTagsInEditor(this->ui_.textEdit, channel);
     });
     this->scaleChangedEvent(this->scale());
     this->signalHolder_.managedConnect(getApp()->getHotkeys()->onItemsUpdated,
@@ -412,6 +678,10 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
         QString message = this->ui_.textEdit->toPlainText();
 
         message = message.replace('\n', ' ');
+        if (auto *twitchChannel = dynamic_cast<TwitchChannel *>(c.get()))
+        {
+            message = normalizeOpenEmoteZeroWidthTags(message, twitchChannel);
+        }
         QString sendMessage =
             getApp()->getCommands()->execCommand(message, c, false);
 
@@ -444,6 +714,7 @@ QString SplitInput::handleSendMessage(const std::vector<QString> &arguments)
     }
 
     message = message.replace('\n', ' ');
+    message = normalizeOpenEmoteZeroWidthTags(message, tc);
     QString sendMessage =
         getApp()->getCommands()->execCommand(message, c, false);
 
@@ -982,6 +1253,10 @@ void SplitInput::insertCompletionText(const QString &input_) const
             break;
         }
     }
+
+    auto *channel =
+        dynamic_cast<TwitchChannel *>(this->split_->getChannel().get());
+    normalizeOpenEmoteZeroWidthTagsInEditor(this->ui_.textEdit, channel);
 }
 
 bool SplitInput::hasSelection() const
@@ -1048,13 +1323,20 @@ void SplitInput::setInputText(const QString &newInputText)
 void SplitInput::editTextChanged()
 {
     auto *app = getApp();
+    auto channel = this->split_->getChannel();
+    const bool useVisualLimit = getSettings()->openEmoteUseVisualMessageLimit &&
+                                channel != nullptr &&
+                                channel->isTwitchChannel();
+    const int messageLimit =
+        useVisualLimit ? getSettings()->openEmoteVisualMessageLimit.getValue()
+                       : TWITCH_MESSAGE_LIMIT;
 
     // set textLengthLabel value
     QString text = this->ui_.textEdit->toPlainText();
 
     if (this->shouldPreventInput(text))
     {
-        this->ui_.textEdit->setPlainText(text.left(TWITCH_MESSAGE_LIMIT));
+        this->ui_.textEdit->setPlainText(this->truncateToMessageLimit(text));
         this->ui_.textEdit->moveCursor(QTextCursor::EndOfBlock);
         return;
     }
@@ -1078,6 +1360,8 @@ void SplitInput::editTextChanged()
                                                true);
     }
 
+    const int effectiveLength = this->effectiveMessageLength(text);
+
     if (text.length() > 0 &&
         getSettings()->messageOverflow.getValue() == MessageOverflow::Highlight)
     {
@@ -1085,17 +1369,32 @@ void SplitInput::editTextChanged()
         QTextCharFormat format;
         QList<QTextEdit::ExtraSelection> selections;
 
-        cursor.setPosition(qMin(text.length(), TWITCH_MESSAGE_LIMIT),
-                           QTextCursor::MoveAnchor);
-        cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
-        selections.append({cursor, format});
-
-        if (text.length() > TWITCH_MESSAGE_LIMIT)
+        if (useVisualLimit)
         {
-            cursor.setPosition(TWITCH_MESSAGE_LIMIT, QTextCursor::MoveAnchor);
+            cursor.setPosition(0, QTextCursor::MoveAnchor);
             cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
-            format.setForeground(Qt::red);
+            if (effectiveLength > messageLimit)
+            {
+                format.setForeground(Qt::red);
+            }
             selections.append({cursor, format});
+        }
+        else
+        {
+            cursor.setPosition(qMin(text.length(), TWITCH_MESSAGE_LIMIT),
+                               QTextCursor::MoveAnchor);
+            cursor.movePosition(QTextCursor::Start, QTextCursor::KeepAnchor);
+            selections.append({cursor, format});
+
+            if (text.length() > TWITCH_MESSAGE_LIMIT)
+            {
+                cursor.setPosition(TWITCH_MESSAGE_LIMIT,
+                                   QTextCursor::MoveAnchor);
+                cursor.movePosition(QTextCursor::End,
+                                    QTextCursor::KeepAnchor);
+                format.setForeground(Qt::red);
+                selections.append({cursor, format});
+            }
         }
         // block reemit of QTextEdit::textChanged()
         {
@@ -1108,8 +1407,8 @@ void SplitInput::editTextChanged()
 
     if (text.length() > 0 && getSettings()->showMessageLength)
     {
-        labelText = QString::number(text.length());
-        if (text.length() > TWITCH_MESSAGE_LIMIT)
+        labelText = QString::number(effectiveLength);
+        if (effectiveLength > messageLimit)
         {
             this->ui_.textEditLength->setStyleSheet("color: red");
         }
@@ -1335,7 +1634,50 @@ bool SplitInput::shouldPreventInput(const QString &text) const
         return false;
     }
 
-    return text.length() > TWITCH_MESSAGE_LIMIT;
+    const auto limit = getSettings()->openEmoteUseVisualMessageLimit
+                           ? getSettings()->openEmoteVisualMessageLimit.getValue()
+                           : TWITCH_MESSAGE_LIMIT;
+    return this->effectiveMessageLength(text) > limit;
+}
+
+int SplitInput::effectiveMessageLength(const QString &text) const
+{
+    auto channel = this->split_->getChannel();
+    if (channel == nullptr || !channel->isTwitchChannel())
+    {
+        return text.length();
+    }
+
+    if (!getSettings()->openEmoteUseVisualMessageLimit)
+    {
+        return text.length();
+    }
+
+    return openEmoteVisualLength(text, channel, this->ui_.textEdit->font());
+}
+
+QString SplitInput::truncateToMessageLimit(const QString &text) const
+{
+    auto channel = this->split_->getChannel();
+    if (channel == nullptr || !channel->isTwitchChannel() ||
+        !getSettings()->openEmoteUseVisualMessageLimit)
+    {
+        return text.left(TWITCH_MESSAGE_LIMIT);
+    }
+
+    const auto limit = getSettings()->openEmoteVisualMessageLimit.getValue();
+    QString output;
+    output.reserve(text.length());
+    for (const auto ch : text)
+    {
+        output.append(ch);
+        if (this->effectiveMessageLength(output) > limit)
+        {
+            output.chop(1);
+            break;
+        }
+    }
+    return output;
 }
 
 int SplitInput::marginForTheme() const

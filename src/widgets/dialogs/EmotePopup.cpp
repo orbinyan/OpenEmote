@@ -5,6 +5,9 @@
 #include "widgets/dialogs/EmotePopup.hpp"
 
 #include "Application.hpp"
+#include "common/Literals.hpp"
+#include "common/network/NetworkRequest.hpp"
+#include "common/network/NetworkResult.hpp"
 #include "common/enums/MessageContext.hpp"
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
@@ -31,16 +34,154 @@
 #include "widgets/Scrollbar.hpp"
 
 #include <QAbstractButton>
+#include <QCursor>
+#include <QDesktopServices>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QJsonObject>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QRegularExpression>
 #include <QStringBuilder>
 #include <QTabWidget>
+#include <QToolTip>
+#include <QUrl>
+#include <QUrlQuery>
 
+#include <optional>
 #include <utility>
 
 namespace {
 
 using namespace chatterino;
+using namespace chatterino::literals;
+
+QString openEmoteReportBaseUrl()
+{
+    const auto value = qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_URL");
+    if (!value.isEmpty())
+    {
+        return value;
+    }
+    return u"https://openemote.com/report"_s;
+}
+
+bool openEmoteReportActionsEnabled()
+{
+    return getSettings()->openEmoteEnableReportActions;
+}
+
+QString openEmoteReportApiUrl()
+{
+    if (!getSettings()->openEmoteEnableApiReports)
+    {
+        return {};
+    }
+    return qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_API_URL");
+}
+
+QString openEmoteReportAuthToken()
+{
+    const auto explicitToken =
+        qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_TOKEN");
+    if (!explicitToken.isEmpty())
+    {
+        return explicitToken;
+    }
+
+    if (const auto account = getApp()->getAccounts()->twitch.getCurrent();
+        account)
+    {
+        return account->getOAuthToken();
+    }
+
+    return QString();
+}
+
+QJsonObject reportQueryToJson(const QUrlQuery &query)
+{
+    QJsonObject payload;
+    for (const auto &[key, value] : query.queryItems())
+    {
+        payload.insert(key, value);
+    }
+    payload.insert("client", "chatterino-openemote");
+    return payload;
+}
+
+void openOpenEmoteReport(const QUrlQuery &query, QObject *caller)
+{
+    const auto apiUrl = openEmoteReportApiUrl();
+    if (!apiUrl.isEmpty())
+    {
+        auto request =
+            NetworkRequest(QUrl(apiUrl), NetworkRequestType::Post)
+                .caller(caller)
+                .json(reportQueryToJson(query))
+                .onSuccess([](const NetworkResult & /*result*/) {
+                    QToolTip::showText(QCursor::pos(),
+                                       u"Submitted report"_s);
+                })
+                .onError([](const NetworkResult & /*result*/) {
+                    QToolTip::showText(QCursor::pos(),
+                                       u"Failed to submit report"_s);
+                });
+
+        const auto authToken = openEmoteReportAuthToken();
+        if (!authToken.isEmpty())
+        {
+            request = std::move(request).header("Authorization",
+                                                "Bearer " + authToken);
+        }
+
+        std::move(request).execute();
+        return;
+    }
+
+    QUrl reportUrl(openEmoteReportBaseUrl());
+    if (!reportUrl.isValid())
+    {
+        return;
+    }
+    reportUrl.setQuery(query);
+    const auto opened = QDesktopServices::openUrl(reportUrl);
+    QToolTip::showText(
+        QCursor::pos(),
+        opened ? u"Opened OpenEmote report page"_s
+               : u"Failed to open OpenEmote report page"_s);
+}
+
+std::optional<QString> chooseReportReason(QWidget *parent)
+{
+    const QStringList reasons{
+        "spam",
+        "stolen",
+        "nsfw",
+        "forbidden",
+        "harassment",
+        "other",
+    };
+    bool ok = false;
+    auto selected = QInputDialog::getItem(parent, "Report", "Reason", reasons,
+                                          0, false, &ok);
+    if (!ok || selected.isEmpty())
+    {
+        return std::nullopt;
+    }
+    return selected;
+}
+
+std::optional<QString> chooseReportNotes(QWidget *parent)
+{
+    bool ok = false;
+    auto notes = QInputDialog::getText(parent, "Report", "Optional notes",
+                                       QLineEdit::Normal, {}, &ok);
+    if (!ok)
+    {
+        return std::nullopt;
+    }
+    return notes;
+}
 
 auto makeTitleMessage(const QString &title)
 {
@@ -292,6 +433,34 @@ EmotePopup::EmotePopup(QWidget *parent)
         QPixmap(":/buttons/clearSearch.png"));
     this->search_->installEventFilter(this);
     layout2->addWidget(this->search_);
+
+    if (openEmoteReportActionsEnabled())
+    {
+        auto *reportButton = new QPushButton("Report");
+        reportButton->setToolTip("Report an emote, message, or thread");
+        QObject::connect(reportButton, &QPushButton::clicked, this, [this] {
+            auto reason = chooseReportReason(this);
+            if (!reason)
+            {
+                return;
+            }
+
+            QUrlQuery query;
+            query.addQueryItem("target", "manual");
+            query.addQueryItem("reason", *reason);
+            if (*reason == "other")
+            {
+                if (auto notes = chooseReportNotes(this);
+                    notes && !notes->isEmpty())
+                {
+                    query.addQueryItem("notes", *notes);
+                }
+            }
+            query.addQueryItem("source", "emote_popup");
+            openOpenEmoteReport(query, this);
+        });
+        layout2->addWidget(reportButton);
+    }
 
     layout->addLayout(layout2);
 

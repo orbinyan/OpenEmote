@@ -416,6 +416,9 @@ set(SOURCE_FILES
         providers/links/LinkResolver.cpp
         providers/links/LinkResolver.hpp
 
+        providers/openemote/OpenEmoteApiClient.cpp
+        providers/openemote/OpenEmoteApiClient.hpp
+
         providers/liveupdates/BasicPubSubClient.hpp
         providers/liveupdates/BasicPubSubListener.hpp
         providers/liveupdates/BasicPubSubManager.hpp
@@ -570,6 +573,10 @@ set(SOURCE_FILES
         util/FuzzyConvert.hpp
         util/Helpers.cpp
         util/Helpers.hpp
+        util/OpenEmoteImport.cpp
+        util/OpenEmoteImport.hpp
+        util/OpenEmoteIntegration.cpp
+        util/OpenEmoteIntegration.hpp
         util/ImageUploader.cpp
         util/ImageUploader.hpp
         util/IncognitoBrowser.cpp
@@ -582,6 +589,8 @@ set(SOURCE_FILES
         util/LayoutHelper.hpp
         util/LoadPixmap.cpp
         util/LoadPixmap.hpp
+        util/OpenEmoteImport.cpp
+        util/OpenEmoteImport.hpp
         util/OnceFlag.cpp
         util/OnceFlag.hpp
         util/RapidjsonHelpers.cpp
@@ -1235,6 +1244,15 @@ if (UNIX)
     if (NOT APPLE AND BUILD_WITH_LIBNOTIFY)
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(LIBNOTIFY REQUIRED IMPORTED_TARGET libnotify)
+        target_include_directories(${LIBRARY_PROJECT}
+            PRIVATE
+            ${LIBNOTIFY_INCLUDEDIR}
+            ${LIBNOTIFY_INCLUDE_DIRS}
+            )
+        target_compile_options(${LIBRARY_PROJECT}
+            PRIVATE
+            ${LIBNOTIFY_CFLAGS}
+            )
         target_link_libraries(${LIBRARY_PROJECT} PRIVATE PkgConfig::LIBNOTIFY)
         target_compile_definitions(${LIBRARY_PROJECT} PUBLIC CHATTERINO_WITH_LIBNOTIFY)
     endif ()

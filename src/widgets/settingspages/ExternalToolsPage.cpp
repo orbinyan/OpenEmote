@@ -10,6 +10,7 @@
 #include "util/Clipboard.hpp"
 #include "util/Helpers.hpp"
 #include "util/ImageUploader.hpp"
+#include "util/OpenEmoteIntegration.hpp"
 #include "util/StreamLink.hpp"
 #include "widgets/settingspages/SettingWidget.hpp"
 
@@ -20,6 +21,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
 
 #include <algorithm>
@@ -31,6 +33,16 @@ namespace {
 inline const QStringList STREAMLINK_QUALITY = {
     "Choose", "Source", "High", "Medium", "Low", "Audio only",
 };
+
+void applyAyanamiUploadPreset(Settings &s)
+{
+    s.imageUploaderEnabled = true;
+    s.imageUploaderUrl = "https://ayanami.app/api/upload";
+    s.imageUploaderFormField = "file";
+    s.imageUploaderHeaders = "";
+    s.imageUploaderLink = "{url}";
+    s.imageUploaderDeletionLink = "{delete_url}";
+}
 
 void exportImageUploaderSettings(QWidget *parent)
 {
@@ -208,6 +220,19 @@ void ExternalToolsPage::initLayout(GeneralPageView &layout)
         SettingWidget::lineEdit("Deletion link", s.imageUploaderDeletionLink)
             ->addTo(layout, form);
 
+        auto *ayanamiPresetButton =
+            new QPushButton("Use Ayanami preset");
+        ayanamiPresetButton->setToolTip(
+            "Apply OpenEmote default uploader values (editable afterward).");
+        QObject::connect(ayanamiPresetButton, &QPushButton::clicked, [this]() {
+            auto &settings = *getSettings();
+            applyAyanamiUploadPreset(settings);
+            QMessageBox::information(
+                this, "Ayanami preset applied",
+                "Ayanami preset applied. You can still edit any field.");
+        });
+        layout.addWidget(ayanamiPresetButton);
+
         layout.addDescription(
             "Export your current image uploader settings as JSON to share with "
             "others, or import settings from clipboard (compatible with ShareX "
@@ -233,6 +258,77 @@ void ExternalToolsPage::initLayout(GeneralPageView &layout)
 
         buttonLayout->addStretch();
         layout.addLayout(buttonLayout);
+
+        layout.addDescription(
+            "Integration JSON block: paste a JSON payload directly to configure "
+            "uploader + OAuth handoff without clipboard token steps.");
+
+        auto *integrationJson = new QPlainTextEdit;
+        integrationJson->setPlaceholderText(
+            openemote::integration::integrationTemplateJson());
+        integrationJson->setPlainText(
+            openemote::integration::integrationTemplateJson());
+        integrationJson->setMinimumHeight(180);
+        layout.addWidget(integrationJson);
+
+        auto *integrationButtons = new QHBoxLayout;
+        auto *applyIntegrationButton = new QPushButton("Apply integration JSON");
+        auto *copyTemplateButton = new QPushButton("Copy JSON template");
+
+        QObject::connect(applyIntegrationButton, &QPushButton::clicked,
+                         [this, integrationJson]() {
+                             auto text = integrationJson->toPlainText().trimmed();
+                             if (text.isEmpty())
+                             {
+                                 QMessageBox::warning(
+                                     this, "Import Failed",
+                                     "Integration JSON cannot be empty.");
+                                 return;
+                             }
+
+                             QJsonParseError parseError;
+                             const auto doc = QJsonDocument::fromJson(
+                                 text.toUtf8(), &parseError);
+                             if (parseError.error != QJsonParseError::NoError ||
+                                 !doc.isObject())
+                             {
+                                 QMessageBox::warning(
+                                     this, "Import Failed",
+                                     "Integration JSON must be a valid JSON object.");
+                                 return;
+                             }
+
+                             auto &settings = *getSettings();
+                             QString importError;
+                             if (openemote::integration::applyIntegrationPack(
+                                     doc.object(), settings, importError))
+                             {
+                                 QMessageBox::information(
+                                     this, "Import Successful",
+                                     "Integration JSON applied successfully.");
+                             }
+                             else
+                             {
+                                 QMessageBox::warning(
+                                     this, "Import Failed",
+                                     importError.isEmpty()
+                                         ? "No supported integration keys were found."
+                                         : importError);
+                             }
+                         });
+
+        QObject::connect(copyTemplateButton, &QPushButton::clicked, [this]() {
+            crossPlatformCopy(
+                openemote::integration::integrationTemplateJson());
+            QMessageBox::information(
+                this, "Template Copied",
+                "Integration JSON template copied to clipboard.");
+        });
+
+        integrationButtons->addWidget(applyIntegrationButton);
+        integrationButtons->addWidget(copyTemplateButton);
+        integrationButtons->addStretch();
+        layout.addLayout(integrationButtons);
     }
 
 #ifdef CHATTERINO_WITH_SPELLCHECK

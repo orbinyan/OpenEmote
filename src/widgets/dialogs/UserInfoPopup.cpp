@@ -12,9 +12,11 @@
 #include "controllers/commands/CommandController.hpp"
 #include "controllers/highlights/HighlightBlacklistUser.hpp"
 #include "controllers/hotkeys/HotkeyController.hpp"
+#include "controllers/nicknames/Nickname.hpp"
 #include "controllers/userdata/UserDataController.hpp"
 #include "messages/Message.hpp"
 #include "messages/MessageBuilder.hpp"
+#include "providers/twitch/TwitchBadge.hpp"
 #include "providers/IvrApi.hpp"
 #include "providers/pronouns/Pronouns.hpp"
 #include "providers/twitch/api/Helix.hpp"
@@ -48,6 +50,8 @@
 
 #include <QCheckBox>
 #include <QDesktopServices>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMetaEnum>
 #include <QNetworkAccessManager>
@@ -145,6 +149,48 @@ int calculateTimeoutDuration(TimeoutButton timeout)
         {"s", 1}, {"m", 60}, {"h", 3600}, {"d", 86400}, {"w", 604800},
     };
     return timeout.second * durations[timeout.first];
+}
+
+QString usercardBadgeLabel(const QString &badgeKey)
+{
+    const auto key = badgeKey.toLower();
+    if (key == "moderator" || key == "lead_moderator")
+    {
+        return "MOD";
+    }
+    if (key == "vip")
+    {
+        return "VIP";
+    }
+    if (key == "broadcaster")
+    {
+        return "BROADCASTER";
+    }
+    if (key == "staff")
+    {
+        return "STAFF";
+    }
+    if (key == "admin")
+    {
+        return "ADMIN";
+    }
+    if (key == "global_mod")
+    {
+        return "GLOBAL MOD";
+    }
+    if (key == "partner")
+    {
+        return "PARTNER";
+    }
+    if (key == "verified")
+    {
+        return "VERIFIED";
+    }
+    if (key == "subscriber")
+    {
+        return "SUB";
+    }
+    return {};
 }
 
 }  // namespace
@@ -395,6 +441,22 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, Split *split)
                 }
             }
 
+            auto badgePalette = QPalette();
+            badgePalette.setColor(QPalette::WindowText, QColor("#aaa"));
+            vbox.emplace<Label>("").assign(&this->ui_.badgesLabel);
+            this->ui_.badgesLabel->setFontStyle(FontStyle::UiMedium);
+            this->ui_.badgesLabel->setPadding(QMargins(8, 0, 0, 0));
+            this->ui_.badgesLabel->setPalette(badgePalette);
+            this->ui_.badgesLabel->setVisible(false);
+
+            auto modelPalette = QPalette();
+            modelPalette.setColor(QPalette::WindowText, QColor("#8fc1ff"));
+            vbox.emplace<Label>("").assign(&this->ui_.avatarModelLabel);
+            this->ui_.avatarModelLabel->setFontStyle(FontStyle::UiMedium);
+            this->ui_.avatarModelLabel->setPadding(QMargins(8, 0, 0, 0));
+            this->ui_.avatarModelLabel->setPalette(modelPalette);
+            this->ui_.avatarModelLabel->setVisible(false);
+
             // items on the left
             if (getSettings()->showPronouns)
             {
@@ -424,6 +486,10 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, Split *split)
 
         user.emplace<LabelButton>("Add notes", this)
             .assign(&this->ui_.notesAdd);
+        auto nickname = user.emplace<LabelButton>("Nickname", this);
+        nickname->setToolTip(
+            "Set or clear a local nickname replacement. "
+            "Stored by user ID when available.");
         auto usercard = user.emplace<LabelButton>("Usercard", this)
                             .assign(&this->ui_.usercardLabel);
         auto mod = user.emplace<PixmapButton>(this);
@@ -445,6 +511,75 @@ UserInfoPopup::UserInfoPopup(bool closeAutomatically, Split *split)
             QDesktopServices::openUrl("https://www.twitch.tv/popout/" +
                                       this->underlyingChannel_->getName() +
                                       "/viewercard/" + this->userName_);
+        });
+
+        QObject::connect(nickname.getElement(), &Button::leftClicked, [this] {
+            const auto username = this->userName_.trimmed();
+            if (username.isEmpty())
+            {
+                return;
+            }
+
+            const auto userId = this->userId_.trimmed();
+            const auto idKey =
+                userId.isEmpty() ? QString{} : QString("id:%1").arg(userId);
+            QString currentNickname;
+            for (const auto &entry : *getSettings()->nicknames.readOnly())
+            {
+                if (entry.isRegex())
+                {
+                    continue;
+                }
+                if (!idKey.isEmpty() &&
+                    entry.name().compare(idKey, Qt::CaseInsensitive) == 0)
+                {
+                    currentNickname = entry.replace();
+                    break;
+                }
+                if (entry.name().compare(username, entry.caseSensitivity()) == 0)
+                {
+                    currentNickname = entry.replace();
+                }
+            }
+
+            bool ok = false;
+            auto nicknameText = QInputDialog::getText(
+                this, "Set nickname",
+                QString("Nickname for %1 (empty to clear):").arg(username),
+                QLineEdit::Normal, currentNickname, &ok);
+            if (!ok)
+            {
+                return;
+            }
+
+            nicknameText = nicknameText.trimmed();
+
+            auto &nicknames = getSettings()->nicknames;
+            const auto &existing = nicknames.raw();
+            for (int i = int(existing.size()) - 1; i >= 0; --i)
+            {
+                const auto &entry = existing[static_cast<size_t>(i)];
+                if (entry.isRegex())
+                {
+                    continue;
+                }
+
+                const bool usernameMatch =
+                    entry.name().compare(username, Qt::CaseInsensitive) == 0;
+                const bool idMatch =
+                    !idKey.isEmpty() &&
+                    entry.name().compare(idKey, Qt::CaseInsensitive) == 0;
+                if (usernameMatch || idMatch)
+                {
+                    nicknames.removeAt(i);
+                }
+            }
+
+            if (!nicknameText.isEmpty())
+            {
+                const auto key = idKey.isEmpty() ? username : idKey;
+                nicknames.append(Nickname{key, nicknameText, false, false});
+            }
         });
 
         QObject::connect(mod.getElement(), &Button::leftClicked, [this] {
@@ -843,6 +978,7 @@ void UserInfoPopup::setData(const QString &name,
 
     this->ui_.nameLabel->setText(name);
     this->ui_.nameLabel->setProperty("copy-text", name);
+    this->updateHeaderBadges();
 
     this->updateUserData();
 
@@ -876,6 +1012,8 @@ void UserInfoPopup::updateLatestMessages()
 
     // shrink dialog in case ChannelView goes from visible to hidden
     this->adjustSize();
+    this->updateHeaderBadges();
+    this->updateAvatarModelSummary();
 
     this->refreshConnection_ =
         std::make_unique<pajlada::Signals::ScopedConnection>(
@@ -899,6 +1037,168 @@ void UserInfoPopup::updateLatestMessages()
                         this->updateLatestMessages();
                     }
                 }));
+}
+
+void UserInfoPopup::updateHeaderBadges()
+{
+    if (this->ui_.badgesLabel == nullptr)
+    {
+        return;
+    }
+
+    QStringList badgeTexts;
+    const auto appendBadge = [&badgeTexts](const QString &value) {
+        if (value.isEmpty() || badgeTexts.contains(value))
+        {
+            return;
+        }
+        badgeTexts.append(value);
+    };
+
+    if (this->underlyingChannel_ != nullptr && !this->userName_.isEmpty() &&
+        this->underlyingChannel_->getName().compare(this->userName_,
+                                                    Qt::CaseInsensitive) == 0)
+    {
+        appendBadge("BROADCASTER");
+    }
+
+    if (this->underlyingChannel_ != nullptr && !this->userName_.isEmpty())
+    {
+        const auto snapshot = this->underlyingChannel_->getMessageSnapshot();
+        for (auto it = snapshot.rbegin(); it != snapshot.rend(); ++it)
+        {
+            const auto &message = *it;
+            if (message == nullptr)
+            {
+                continue;
+            }
+
+            const bool isSameUser =
+                message->loginName.compare(this->userName_,
+                                           Qt::CaseInsensitive) == 0 ||
+                checkMessageUserName(this->userName_, message);
+            if (!isSameUser)
+            {
+                continue;
+            }
+
+            for (const auto &badge : message->twitchBadges)
+            {
+                appendBadge(usercardBadgeLabel(badge.key_));
+            }
+
+            for (const auto &badge : message->externalBadges)
+            {
+                const auto delimiter = badge.indexOf(':');
+                if (delimiter <= 0)
+                {
+                    continue;
+                }
+                const auto provider = badge.left(delimiter).trimmed().toLower();
+                const auto name = badge.mid(delimiter + 1).trimmed();
+                if (provider == "openemote" && !name.isEmpty())
+                {
+                    appendBadge(name.toUpper());
+                }
+            }
+
+            break;
+        }
+    }
+
+    this->ui_.badgesLabel->setVisible(!badgeTexts.isEmpty());
+    this->ui_.badgesLabel->setText(badgeTexts.join("  "));
+}
+
+void UserInfoPopup::updateAvatarModelSummary()
+{
+    if (this->ui_.avatarModelLabel == nullptr)
+    {
+        return;
+    }
+
+    QString modelId;
+    QString skinId;
+    QString idleAsset;
+    QString action;
+    QString target;
+
+    if (this->underlyingChannel_ != nullptr && !this->userName_.isEmpty())
+    {
+        const auto snapshot = this->underlyingChannel_->getMessageSnapshot();
+        for (auto it = snapshot.rbegin(); it != snapshot.rend(); ++it)
+        {
+            const auto &message = *it;
+            if (message == nullptr)
+            {
+                continue;
+            }
+
+            const bool isSameUser =
+                message->loginName.compare(this->userName_,
+                                           Qt::CaseInsensitive) == 0 ||
+                checkMessageUserName(this->userName_, message);
+            if (!isSameUser)
+            {
+                continue;
+            }
+
+            if (modelId.isEmpty() && !message->openEmoteAvatarModelId.isEmpty())
+            {
+                modelId = message->openEmoteAvatarModelId;
+            }
+            if (skinId.isEmpty() && !message->openEmoteAvatarSkinId.isEmpty())
+            {
+                skinId = message->openEmoteAvatarSkinId;
+            }
+            if (idleAsset.isEmpty() &&
+                !message->openEmoteAvatarIdleAsset.isEmpty())
+            {
+                idleAsset = message->openEmoteAvatarIdleAsset;
+            }
+            if (action.isEmpty() && !message->openEmoteAvatarAction.isEmpty())
+            {
+                action = message->openEmoteAvatarAction;
+                target = message->openEmoteAvatarActionTarget;
+            }
+
+            if (!modelId.isEmpty() || !action.isEmpty())
+            {
+                break;
+            }
+        }
+    }
+
+    if (modelId.isEmpty() && action.isEmpty())
+    {
+        this->ui_.avatarModelLabel->setVisible(false);
+        this->ui_.avatarModelLabel->setText({});
+        this->ui_.avatarModelLabel->setToolTip({});
+        return;
+    }
+
+    QString summary = modelId.isEmpty() ? "Avatar model: (not set)"
+                                        : QString("Avatar model: %1").arg(
+                                              modelId);
+    if (!skinId.isEmpty())
+    {
+        summary += QString(" · skin %1").arg(skinId);
+    }
+    if (!action.isEmpty())
+    {
+        summary += QString(" · action !%1").arg(action);
+        if (!target.isEmpty())
+        {
+            summary += QString(" @%1").arg(target);
+        }
+    }
+
+    this->ui_.avatarModelLabel->setVisible(true);
+    this->ui_.avatarModelLabel->setText(summary);
+    this->ui_.avatarModelLabel->setToolTip(
+        idleAsset.isEmpty()
+            ? "OpenEmote avatar model fallback: static profile avatar"
+            : QString("Idle asset: %1").arg(idleAsset.left(256)));
 }
 
 void UserInfoPopup::updateUserData()
@@ -1047,6 +1347,8 @@ void UserInfoPopup::updateUserData()
         this->ui_.block->setEnabled(true);
         this->ui_.ignoreHighlights->setChecked(isIgnoringHighlights);
         this->ui_.notesAdd->setEnabled(true);
+        this->updateHeaderBadges();
+        this->updateAvatarModelSummary();
 
         auto type = this->underlyingChannel_->getType();
 

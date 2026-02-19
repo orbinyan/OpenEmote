@@ -17,6 +17,7 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <QStringList>
+#include <QUrl>
 #include <QUuid>
 
 namespace {
@@ -89,6 +90,33 @@ std::optional<Args::Channel> parseActivateOption(QString input)
         .provider = ProviderId::Twitch,
         .name = input,
     };
+}
+
+std::optional<QUrl> parseOpenEmoteIntegrationUrl(const QStringList &args)
+{
+    for (const auto &arg : args)
+    {
+        const auto url = QUrl(arg);
+        if (!url.isValid())
+        {
+            continue;
+        }
+        if (url.scheme().compare("openemote", Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+        if (url.host().compare("integrations", Qt::CaseInsensitive) != 0 &&
+            url.host().compare("integration", Qt::CaseInsensitive) != 0)
+        {
+            continue;
+        }
+        if (!url.path().startsWith("/apply"))
+        {
+            continue;
+        }
+        return url;
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -184,6 +212,7 @@ Args::Args(const QApplication &app, const Paths &paths)
     this->shouldRunBrowserExtensionHost =
         (args.size() > 0 && (args[0].startsWith("chrome-extension://") ||
                              args[0].endsWith(".json")));
+    this->openEmoteIntegrationUrl = parseOpenEmoteIntegrationUrl(args);
 
     if (parser.isSet(channelLayout))
     {

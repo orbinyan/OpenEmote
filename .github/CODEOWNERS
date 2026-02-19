@@ -1,0 +1,4 @@
+# OpenEmote maintainer ownership (review gate), without changing author history.
+# Historical contributors remain credited through Git history and PR records.
+
+* @orbinyan

@@ -432,6 +432,14 @@ public:
     BoolSetting enableSevenTVChannelEmotes = {"/emotes/seventv/channel", true};
     BoolSetting enableSevenTVEventAPI = {"/emotes/seventv/eventapi", true};
     BoolSetting sendSevenTVActivity = {"/emotes/seventv/sendActivity", true};
+    BoolSetting openEmoteEnableCrossChannelEmotes = {
+        "/openemote/emotes/crossChannel/enabled", false};
+    BoolSetting openEmoteCrossChannelEmotesAllowlistMode = {
+        "/openemote/emotes/crossChannel/allowlistOnly", false};
+    QStringSetting openEmoteCrossChannelEmotesAllowChannels = {
+        "/openemote/emotes/crossChannel/allowChannels", ""};
+    QStringSetting openEmoteCrossChannelEmotesBlockChannels = {
+        "/openemote/emotes/crossChannel/blockChannels", ""};
 
     /// Links
     BoolSetting linksDoubleClickOnly = {"/links/doubleClickToOpen", false};
@@ -685,14 +693,16 @@ public:
     // Image Uploader
     BoolSetting imageUploaderEnabled = {"/external/imageUploader/enabled",
                                         false};
-    QStringSetting imageUploaderUrl = {"/external/imageUploader/url", ""};
+    QStringSetting imageUploaderUrl = {"/external/imageUploader/url",
+                                       "https://ayanami.app/api/upload"};
     QStringSetting imageUploaderFormField = {
-        "/external/imageUploader/formField", ""};
+        "/external/imageUploader/formField", "file"};
     QStringSetting imageUploaderHeaders = {"/external/imageUploader/headers",
                                            ""};
-    QStringSetting imageUploaderLink = {"/external/imageUploader/link", ""};
+    QStringSetting imageUploaderLink = {"/external/imageUploader/link",
+                                        "{url}"};
     QStringSetting imageUploaderDeletionLink = {
-        "/external/imageUploader/deletionLink", ""};
+        "/external/imageUploader/deletionLink", "{delete_url}"};
 
     /// Misc
     BoolSetting betaUpdates = {"/misc/beta", false};
@@ -703,6 +713,81 @@ public:
     IntSetting startUpNotification = {"/misc/startUpNotification", 0};
     QStringSetting currentVersion = {"/misc/currentVersion", ""};
     IntSetting overlayKnowledgeLevel = {"/misc/overlayKnowledgeLevel", 0};
+    BoolSetting openEmoteOnboardingShown = {"/openemote/onboardingShown",
+                                            false};
+    IntSetting openEmoteOnboardingRevision = {
+        "/openemote/onboardingRevision", 0};
+    QStringSetting openEmoteOnboardingPreset = {"/openemote/onboardingPreset",
+                                                "classic"};
+    BoolSetting openEmoteEnableReportActions = {
+        "/openemote/enableReportActions", true};
+    BoolSetting openEmoteEnableApiReports = {"/openemote/enableApiReports",
+                                             false};
+    QStringSetting openEmoteOauthBridgeUrl = {
+        "/openemote/oauthBridgeUrl",
+        "http://127.0.0.1:6137/openemote/oauth/pending"};
+    BoolSetting openEmoteHideManualOauthInStreamerMode = {
+        "/openemote/hideManualOauthInStreamerMode", true};
+    BoolSetting openEmoteBotCompatibilityMode = {
+        "/openemote/botCompatibilityMode", false};
+    BoolSetting openEmoteCompactAuthorAvatar = {
+        "/openemote/compactAuthorAvatar", false};
+    BoolSetting openEmoteCompactAvatarKeepNames = {
+        "/openemote/compactAvatarKeepNames", true};
+    BoolSetting openEmoteAvatarDecorators = {"/openemote/avatarDecorators",
+                                             true};
+    BoolSetting openEmoteAvatarCornerBadges = {
+        "/openemote/avatarCornerBadges", false};
+    BoolSetting openEmoteAvatarBadgeLinear = {
+        "/openemote/avatarBadgeLinear", false};
+    BoolSetting openEmoteAvatarBadgeLinearVertical = {
+        "/openemote/avatarBadgeLinearVertical", true};
+    QStringSetting openEmoteAvatarBadgeAnchor = {
+        "/openemote/avatarBadgeAnchor", "left"};
+    BoolSetting openEmoteAvatarBadgeRightSide = {
+        "/openemote/avatarBadgeRightSide", false};
+    IntSetting openEmoteAvatarCornerBadgeMax = {
+        "/openemote/avatarCornerBadgeMax", 4};
+    BoolSetting openEmoteIdentityRailEnabled = {
+        "/openemote/identityRailEnabled", true};
+    BoolSetting openEmoteCompactHeaderLayout = {
+        "/openemote/compactHeaderLayout", false};
+    IntSetting openEmoteIdentityRailWidth = {"/openemote/identityRailWidth",
+                                             72};
+    IntSetting openEmoteIdentityRailMinRowHeight = {
+        "/openemote/identityRailMinRowHeight", 22};
+    BoolSetting openEmotePreferThreadDrawer = {
+        "/openemote/preferThreadDrawer", true};
+    BoolSetting openEmoteShowThreadActivityIndicator = {
+        "/openemote/showThreadActivityIndicator", true};
+    BoolSetting openEmoteTimestampGapsOnly = {
+        "/openemote/timestampGapsOnly", true};
+    IntSetting openEmoteTimestampGapMinutes = {
+        "/openemote/timestampGapMinutes", 4};
+    BoolSetting openEmoteTimestampAlwaysSystem = {
+        "/openemote/timestampAlwaysSystem", true};
+    QStringSetting openEmoteTimestampAlwaysUsers = {
+        "/openemote/timestampAlwaysUsers",
+        "nightbot,streamelements,moobot,fossabot"};
+    BoolSetting openEmoteUseVisualMessageLimit = {
+        "/openemote/useVisualMessageLimit", true};
+    IntSetting openEmoteVisualMessageLimit = {"/openemote/visualMessageLimit",
+                                              500};
+    BoolSetting openEmoteMaxRowHeightEnabled = {
+        "/openemote/maxRowHeightEnabled", false};
+    IntSetting openEmoteMaxRowHeight = {"/openemote/maxRowHeight", 44};
+    QStringSetting openEmoteChannelEmoteScaleOverrides = {
+        "/openemote/channelEmoteScaleOverrides", ""};
+    BoolSetting openEmoteEnableCustomBadgePacks = {
+        "/openemote/enableCustomBadgePacks", false};
+    QStringSetting openEmoteCustomBadgePackAllowlist = {
+        "/openemote/customBadgePackAllowlist", ""};
+    BoolSetting openEmoteAllowUntrustedBadgePacks = {
+        "/openemote/allowUntrustedBadgePacks", false};
+    BoolSetting openEmoteEnableSecureGroupWhispers = {
+        "/openemote/secureGroupWhispers/enabled", true};
+    QStringSetting openEmoteSecureGroupDefinitions = {
+        "/openemote/secureGroupWhispers/definitions", "{}"};
 
     BoolSetting loadTwitchMessageHistoryOnConnect = {
         "/misc/twitch/loadMessageHistoryOnConnect", true};

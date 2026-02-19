@@ -5,6 +5,7 @@
 #include "controllers/commands/builtin/twitch/SendWhisper.hpp"
 
 #include "Application.hpp"
+#include "common/Credentials.hpp"
 #include "common/LinkParser.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "controllers/commands/CommandContext.hpp"
@@ -21,11 +22,18 @@
 #include "singletons/Settings.hpp"
 #include "singletons/StreamerMode.hpp"
 #include "singletons/Theme.hpp"
+#include "util/OpenEmoteSecureGroupWhisper.hpp"
 #include "util/Twitch.hpp"
+
+#include <QApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace {
 
 using namespace chatterino;
+using namespace chatterino::openemote::groupwhisper;
 
 QString formatWhisperError(HelixWhisperError error, const QString &message)
 {
@@ -189,6 +197,128 @@ bool appendWhisperMessageWordsLocally(const QStringList &words)
     return true;
 }
 
+struct GroupDefinition {
+    QString name;
+    QString channel;
+    QStringList members;
+};
+
+using GroupMap = QMap<QString, GroupDefinition>;
+
+QString normalizeMember(QStringView input)
+{
+    auto value = input.toString().trimmed().toLower();
+    if (value.startsWith('@'))
+    {
+        value.remove(0, 1);
+    }
+
+    stripChannelName(value);
+
+    return value;
+}
+
+GroupMap loadGroupDefinitions()
+{
+    GroupMap out;
+    const auto encoded = getSettings()->openEmoteSecureGroupDefinitions.getValue();
+    const auto parsed = QJsonDocument::fromJson(encoded.toUtf8());
+    if (!parsed.isObject())
+    {
+        return out;
+    }
+
+    const auto root = parsed.object();
+    for (auto it = root.begin(); it != root.end(); ++it)
+    {
+        if (!it.value().isObject())
+        {
+            continue;
+        }
+
+        GroupDefinition def;
+        def.name = normalizeGroupName(it.key());
+        if (def.name.isEmpty())
+        {
+            continue;
+        }
+
+        auto obj = it.value().toObject();
+        def.channel = obj.value("channel").toString().trimmed().toLower();
+        if (def.channel.startsWith('#'))
+        {
+            def.channel.remove(0, 1);
+        }
+
+        if (auto members = obj.value("members"); members.isArray())
+        {
+            for (const auto &v : members.toArray())
+            {
+                auto normalized = normalizeMember(v.toString());
+                if (!normalized.isEmpty() && !def.members.contains(normalized))
+                {
+                    def.members.push_back(normalized);
+                }
+            }
+        }
+
+        out.insert(def.name, def);
+    }
+
+    return out;
+}
+
+void saveGroupDefinitions(const GroupMap &groups)
+{
+    QJsonObject root;
+    for (auto it = groups.begin(); it != groups.end(); ++it)
+    {
+        QJsonObject obj;
+        obj.insert("channel", it->channel);
+
+        QJsonArray members;
+        for (const auto &member : it->members)
+        {
+            members.append(member);
+        }
+        obj.insert("members", members);
+        root.insert(it.key(), obj);
+    }
+
+    const auto compact = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    getSettings()->openEmoteSecureGroupDefinitions.setValue(
+        QString::fromUtf8(compact));
+}
+
+void sendOneGroupWhisper(const ChannelPtr &feedbackChannel, QString target,
+                         QString payload)
+{
+    auto currentUser = getApp()->getAccounts()->twitch.getCurrent();
+    getHelix()->getUserByName(
+        target,
+        [feedbackChannel, currentUser, payload](const auto &targetUser) {
+            getHelix()->sendWhisper(
+                currentUser->getUserId(), targetUser.id, payload, [] {},
+                [feedbackChannel](auto error, auto message) {
+                    auto errorMessage = formatWhisperError(error, message);
+                    feedbackChannel->addSystemMessage(errorMessage);
+                });
+        },
+        [feedbackChannel, target] {
+            feedbackChannel->addSystemMessage(
+                QStringLiteral("No user matching \"%1\".").arg(target));
+        });
+}
+
+QString groupWhisperUsage()
+{
+    return QStringLiteral(
+        "Usage: /gw create <group> <members_csv> <secret> | "
+        "/gw send <group> <message> | /gw key <group> <secret> | "
+        "/gw add <group> <member> | /gw remove <group> <member> | "
+        "/gw delete <group> | /gw list");
+}
+
 }  // namespace
 
 namespace chatterino::commands {
@@ -239,6 +369,298 @@ QString sendWhisper(const CommandContext &ctx)
     }
 
     return "";
+}
+
+QString sendGroupWhisper(const CommandContext &ctx)
+{
+    if (ctx.channel == nullptr)
+    {
+        return {};
+    }
+
+    if (!getSettings()->openEmoteEnableSecureGroupWhispers)
+    {
+        ctx.channel->addSystemMessage(
+            "Secure group whispers are disabled in settings.");
+        return {};
+    }
+
+    if (ctx.words.size() < 2)
+    {
+        ctx.channel->addSystemMessage(groupWhisperUsage());
+        return {};
+    }
+
+    auto currentUser = getApp()->getAccounts()->twitch.getCurrent();
+    if (currentUser->isAnon())
+    {
+        ctx.channel->addSystemMessage(
+            "You must be logged in to use group whispers.");
+        return {};
+    }
+
+    auto groups = loadGroupDefinitions();
+    const auto action = ctx.words.at(1).trimmed().toLower();
+
+    if (action == "list")
+    {
+        if (groups.isEmpty())
+        {
+            ctx.channel->addSystemMessage("No secure groups configured.");
+            return {};
+        }
+
+        for (auto it = groups.begin(); it != groups.end(); ++it)
+        {
+            ctx.channel->addSystemMessage(
+                QStringLiteral("🔒 %1 [%2] members=%3")
+                    .arg(it.key(), it->channel,
+                         QString::number(it->members.size())));
+        }
+        return {};
+    }
+
+    if (action == "create")
+    {
+        if (ctx.words.size() < 5)
+        {
+            ctx.channel->addSystemMessage(
+                "Usage: /gw create <group> <members_csv> <secret>");
+            return {};
+        }
+
+        auto group = normalizeGroupName(ctx.words.at(2));
+        if (group.isEmpty())
+        {
+            ctx.channel->addSystemMessage(
+                "Invalid group name. Allowed: a-z 0-9 _ -");
+            return {};
+        }
+
+        GroupDefinition def;
+        def.name = group;
+        def.channel =
+            ctx.channel->isTwitchChannel() ? ctx.channel->getName().toLower()
+                                           : QString();
+        if (def.channel.startsWith('#'))
+        {
+            def.channel.remove(0, 1);
+        }
+
+        for (const auto &member :
+             ctx.words.at(3).split(',', Qt::SkipEmptyParts))
+        {
+            auto normalized = normalizeMember(member);
+            if (!normalized.isEmpty() && !def.members.contains(normalized))
+            {
+                def.members.push_back(normalized);
+            }
+        }
+
+        auto self = currentUser->getUserName().trimmed().toLower();
+        if (!self.isEmpty() && !def.members.contains(self))
+        {
+            def.members.push_back(self);
+        }
+
+        auto secret = ctx.words.mid(4).join(' ').trimmed();
+        if (secret.isEmpty())
+        {
+            ctx.channel->addSystemMessage("Secret cannot be empty.");
+            return {};
+        }
+
+        Credentials::instance().set("openemote", credentialNameForGroup(group),
+                                    secret);
+        groups[group] = def;
+        saveGroupDefinitions(groups);
+
+        ctx.channel->addSystemMessage(
+            QStringLiteral("Created secure group \"%1\" with %2 member(s).")
+                .arg(group, QString::number(def.members.size())));
+        return {};
+    }
+
+    if (action == "key")
+    {
+        if (ctx.words.size() < 4)
+        {
+            ctx.channel->addSystemMessage("Usage: /gw key <group> <secret>");
+            return {};
+        }
+
+        auto group = normalizeGroupName(ctx.words.at(2));
+        if (group.isEmpty() || !groups.contains(group))
+        {
+            ctx.channel->addSystemMessage("Unknown group.");
+            return {};
+        }
+
+        auto secret = ctx.words.mid(3).join(' ').trimmed();
+        if (secret.isEmpty())
+        {
+            ctx.channel->addSystemMessage("Secret cannot be empty.");
+            return {};
+        }
+
+        Credentials::instance().set("openemote", credentialNameForGroup(group),
+                                    secret);
+        ctx.channel->addSystemMessage(
+            QStringLiteral("Updated secret for \"%1\".").arg(group));
+        return {};
+    }
+
+    if (action == "add" || action == "remove")
+    {
+        if (ctx.words.size() < 4)
+        {
+            ctx.channel->addSystemMessage(
+                QStringLiteral("Usage: /gw %1 <group> <member>").arg(action));
+            return {};
+        }
+
+        auto group = normalizeGroupName(ctx.words.at(2));
+        if (group.isEmpty() || !groups.contains(group))
+        {
+            ctx.channel->addSystemMessage("Unknown group.");
+            return {};
+        }
+
+        auto member = normalizeMember(ctx.words.at(3));
+        if (member.isEmpty())
+        {
+            ctx.channel->addSystemMessage("Invalid member.");
+            return {};
+        }
+
+        auto &members = groups[group].members;
+        if (action == "add")
+        {
+            if (!members.contains(member))
+            {
+                members.push_back(member);
+            }
+        }
+        else
+        {
+            members.removeAll(member);
+        }
+
+        saveGroupDefinitions(groups);
+        ctx.channel->addSystemMessage(
+            QStringLiteral("%1 member \"%2\" in group \"%3\".")
+                .arg(action == "add" ? "Updated" : "Removed", member, group));
+        return {};
+    }
+
+    if (action == "delete")
+    {
+        if (ctx.words.size() < 3)
+        {
+            ctx.channel->addSystemMessage("Usage: /gw delete <group>");
+            return {};
+        }
+        auto group = normalizeGroupName(ctx.words.at(2));
+        if (group.isEmpty() || !groups.remove(group))
+        {
+            ctx.channel->addSystemMessage("Unknown group.");
+            return {};
+        }
+
+        saveGroupDefinitions(groups);
+        Credentials::instance().erase("openemote", credentialNameForGroup(group));
+        ctx.channel->addSystemMessage(
+            QStringLiteral("Deleted secure group \"%1\".").arg(group));
+        return {};
+    }
+
+    if (action == "send")
+    {
+        if (ctx.words.size() < 4)
+        {
+            ctx.channel->addSystemMessage("Usage: /gw send <group> <message>");
+            return {};
+        }
+
+        auto group = normalizeGroupName(ctx.words.at(2));
+        if (group.isEmpty() || !groups.contains(group))
+        {
+            ctx.channel->addSystemMessage("Unknown group.");
+            return {};
+        }
+
+        auto def = groups.value(group);
+        auto anchorChannel = def.channel;
+        if (anchorChannel.isEmpty() && ctx.channel->isTwitchChannel())
+        {
+            anchorChannel = ctx.channel->getName().toLower();
+            if (anchorChannel.startsWith('#'))
+            {
+                anchorChannel.remove(0, 1);
+            }
+            groups[group].channel = anchorChannel;
+            saveGroupDefinitions(groups);
+        }
+        if (anchorChannel.isEmpty())
+        {
+            ctx.channel->addSystemMessage(
+                "This group has no anchor channel. Run /gw create from a Twitch channel or set one via /gw create.");
+            return {};
+        }
+
+        auto plaintext = ctx.words.mid(3).join(' ');
+        Credentials::instance().get(
+            "openemote", credentialNameForGroup(group), QApplication::instance(),
+            [feedback = ctx.channel, def = std::move(def), group,
+             plaintext = std::move(plaintext),
+             sender = currentUser->getUserName(),
+             anchorChannel](const QString &secret) {
+                if (secret.isEmpty())
+                {
+                    feedback->addSystemMessage(
+                        QStringLiteral(
+                            "Missing key for \"%1\". Use /gw key %1 <secret>.")
+                            .arg(group));
+                    return;
+                }
+
+                const auto payload = encodeEnvelope(group, anchorChannel,
+                                                    plaintext, secret);
+                if (payload.isEmpty())
+                {
+                    feedback->addSystemMessage("Failed to encode group whisper.");
+                    return;
+                }
+
+                auto uniqueMembers = def.members;
+                uniqueMembers.removeDuplicates();
+                for (const auto &member : uniqueMembers)
+                {
+                    if (member.compare(sender, Qt::CaseInsensitive) == 0)
+                    {
+                        continue;
+                    }
+                    sendOneGroupWhisper(feedback, member, payload);
+                }
+
+                auto target = feedback;
+                if (!target->isTwitchChannel())
+                {
+                    auto resolved =
+                        getApp()->getTwitch()->getChannelOrEmpty(anchorChannel);
+                    if (!resolved->isEmpty())
+                    {
+                        target = resolved;
+                    }
+                }
+                appendThreadMessage(target, group, sender, plaintext, true);
+            });
+
+        return {};
+    }
+
+    ctx.channel->addSystemMessage(groupWhisperUsage());
+    return {};
 }
 
 }  // namespace chatterino::commands

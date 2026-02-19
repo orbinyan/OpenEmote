@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openemote.com/schemas/integration-pack.schema.json",
+  "title": "OpenEmote Integration Pack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "kind",
+    "imageUploader"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "kind": {
+      "const": "openemote.integration-pack"
+    },
+    "imageUploader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Version",
+        "RequestURL",
+        "FileFormName",
+        "URL"
+      ],
+      "properties": {
+        "Version": {
+          "type": "string"
+        },
+        "Name": {
+          "type": "string"
+        },
+        "RequestMethod": {
+          "type": "string",
+          "enum": [
+            "POST"
+          ]
+        },
+        "RequestURL": {
+          "type": "string",
+          "format": "uri"
+        },
+        "Body": {
+          "type": "string",
+          "enum": [
+            "MultipartFormData"
+          ]
+        },
+        "FileFormName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "URL": {
+          "type": "string",
+          "minLength": 1
+        },
+        "DeletionURL": {
+          "type": "string"
+        },
+        "Headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "oauth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bridgeUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "hideManualInStreamerMode": {
+          "type": "boolean"
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "type": "object"
+    }
+  }
+}

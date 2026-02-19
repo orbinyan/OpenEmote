@@ -73,6 +73,15 @@ struct Message {
     ///  - 7tv:sub
     QStringList externalBadges;
 
+    /// OpenEmote avatar model metadata for usercard/profile rendering.
+    /// These fields are advisory and optional.
+    QString openEmoteAvatarModelId;
+    QString openEmoteAvatarSkinId;
+    QString openEmoteAvatarIdleAsset;
+    QString openEmoteAvatarAction;
+    QString openEmoteAvatarActionTarget;
+    QString openEmotePreferredNickname;
+
     std::shared_ptr<QColor> highlightColor;
     // Each reply holds a reference to the thread. When every reply is dropped,
     // the reply thread will be cleaned up by the TwitchChannel.

@@ -7,10 +7,12 @@
 #include "Application.hpp"
 #include "common/Common.hpp"
 #include "common/network/NetworkRequest.hpp"
+#include "common/network/NetworkResult.hpp"
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "singletons/Settings.hpp"
+#include "singletons/StreamerMode.hpp"
 #include "util/Clipboard.hpp"
 #include "util/Helpers.hpp"
 
@@ -22,6 +24,7 @@
 #include <QClipboard>
 #include <QDebug>
 #include <QDesktopServices>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QUrl>
 
@@ -46,6 +49,60 @@ QString resolveLoginLink()
     }
 
     return "https://chatterino.com/client_login";
+}
+
+QString resolveOpenEmoteOauthBridgeUrl()
+{
+    auto envBridge =
+        qEnvironmentVariable("CHATTERINO_OPENEMOTE_OAUTH_BRIDGE_URL");
+    if (!envBridge.isEmpty())
+    {
+        return envBridge;
+    }
+    return getSettings()->openEmoteOauthBridgeUrl.getValue().trimmed();
+}
+
+bool tryReadCredentialField(const QJsonObject &object,
+                            const QStringList &keys, QString &out)
+{
+    for (const auto &key : keys)
+    {
+        auto it = object.find(key);
+        if (it != object.end() && it->isString())
+        {
+            const auto value = it->toString().trimmed();
+            if (!value.isEmpty())
+            {
+                out = value;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool extractCredentialsFromJson(const QJsonObject &root, QString &userID,
+                                QString &username, QString &clientID,
+                                QString &oauthToken)
+{
+    const QJsonObject payload =
+        root.contains("credentials") && root.value("credentials").isObject()
+            ? root.value("credentials").toObject()
+        : root.contains("data") && root.value("data").isObject()
+            ? root.value("data").toObject()
+            : root;
+
+    tryReadCredentialField(payload, {"user_id", "userID", "uid"}, userID);
+    tryReadCredentialField(payload, {"username", "login", "user_name"},
+                           username);
+    tryReadCredentialField(payload, {"client_id", "clientID"}, clientID);
+    tryReadCredentialField(payload,
+                           {"oauth_token", "oauthToken", "access_token",
+                            "token"},
+                           oauthToken);
+
+    return !(userID.isEmpty() || username.isEmpty() || clientID.isEmpty() ||
+             oauthToken.isEmpty());
 }
 
 bool logInWithCredentials(QWidget *parent, const QString &userID,
@@ -102,6 +159,7 @@ BasicLoginWidget::BasicLoginWidget()
     this->setLayout(&this->ui_.layout);
 
     this->ui_.loginButton.setText("Log in with Twitch (Opens in browser)");
+    this->ui_.secureHandoffButton.setText("Connect from OpenEmote (No paste)");
     this->ui_.pasteCodeButton.setText("Paste login info");
     this->ui_.unableToOpenBrowserHelper.setWindowTitle(
         "Chatterino - unable to open in browser");
@@ -115,10 +173,19 @@ BasicLoginWidget::BasicLoginWidget()
     this->ui_.unableToOpenBrowserHelper.setOpenExternalLinks(true);
 
     this->ui_.horizontalLayout.addWidget(&this->ui_.loginButton);
+    this->ui_.horizontalLayout.addWidget(&this->ui_.secureHandoffButton);
     this->ui_.horizontalLayout.addWidget(&this->ui_.pasteCodeButton);
 
     this->ui_.layout.addLayout(&this->ui_.horizontalLayout);
+    this->ui_.secureHandoffHelper.setWordWrap(true);
+    this->ui_.secureHandoffHelper.setText(
+        "Recommended for stream safety: complete OAuth in browser, then use "
+        "\"Connect from OpenEmote\" so no token copy/paste is shown.");
+    this->ui_.layout.addWidget(&this->ui_.secureHandoffHelper);
     this->ui_.layout.addWidget(&this->ui_.unableToOpenBrowserHelper);
+
+    this->ui_.secureHandoffButton.setToolTip(
+        "Fetch pending OAuth credentials from local OpenEmote handoff bridge.");
 
     connect(&this->ui_.loginButton, &QPushButton::clicked, [this, logInLink]() {
         qCDebug(chatterinoWidget) << "open login in browser";
@@ -173,6 +240,62 @@ BasicLoginWidget::BasicLoginWidget()
             this->window()->close();
         }
     });
+
+    connect(&this->ui_.secureHandoffButton, &QPushButton::clicked, [this]() {
+        const auto bridgeUrl = resolveOpenEmoteOauthBridgeUrl();
+        if (bridgeUrl.isEmpty())
+        {
+            QMessageBox::warning(
+                this, "OpenEmote handoff not configured",
+                "No OAuth handoff bridge URL is configured.");
+            return;
+        }
+
+        this->ui_.secureHandoffButton.setEnabled(false);
+        this->ui_.secureHandoffButton.setText("Connecting...");
+
+        NetworkRequest(QUrl(bridgeUrl), NetworkRequestType::Get)
+            .onSuccess([this](const NetworkResult &result) {
+                this->ui_.secureHandoffButton.setEnabled(true);
+                this->ui_.secureHandoffButton.setText(
+                    "Connect from OpenEmote (No paste)");
+
+                const auto payload = result.parseJson();
+                QString oauthToken, clientID, username, userID;
+                if (!extractCredentialsFromJson(payload, userID, username,
+                                                clientID, oauthToken))
+                {
+                    QMessageBox::information(
+                        this, "No pending OAuth handoff",
+                        "No complete credentials were found in the handoff "
+                        "response. Finish login in browser and try again.");
+                    return;
+                }
+
+                if (logInWithCredentials(this, userID, username, clientID,
+                                         oauthToken))
+                {
+                    this->window()->close();
+                }
+            })
+            .onError([this](const NetworkResult &result) {
+                this->ui_.secureHandoffButton.setEnabled(true);
+                this->ui_.secureHandoffButton.setText(
+                    "Connect from OpenEmote (No paste)");
+                QMessageBox::warning(
+                    this, "OpenEmote handoff failed",
+                    QString("Unable to fetch OAuth handoff credentials: %1")
+                        .arg(result.formatError()));
+                return true;
+            })
+            .execute();
+    });
+
+    if (getApp()->getStreamerMode()->isEnabled() &&
+        getSettings()->openEmoteHideManualOauthInStreamerMode)
+    {
+        this->ui_.pasteCodeButton.hide();
+    }
 }
 
 AdvancedLoginWidget::AdvancedLoginWidget()
@@ -273,6 +396,17 @@ LoginDialog::LoginDialog(QWidget *parent)
 
     this->ui_.tabWidget.addTab(&this->ui_.basic, "Basic");
     this->ui_.tabWidget.addTab(&this->ui_.advanced, "Advanced");
+
+    if (getApp()->getStreamerMode()->isEnabled() &&
+        getSettings()->openEmoteHideManualOauthInStreamerMode)
+    {
+        const auto advancedIndex =
+            this->ui_.tabWidget.indexOf(&this->ui_.advanced);
+        if (advancedIndex >= 0)
+        {
+            this->ui_.tabWidget.removeTab(advancedIndex);
+        }
+    }
 
     this->ui_.buttonBox.setStandardButtons(QDialogButtonBox::Close);
 

@@ -6,6 +6,9 @@
 
 #include "Application.hpp"
 #include "common/Common.hpp"
+#include "common/Literals.hpp"
+#include "common/network/NetworkRequest.hpp"
+#include "common/network/NetworkResult.hpp"
 #include "common/QLogging.hpp"
 #include "controllers/accounts/AccountController.hpp"
 #include "controllers/commands/Command.hpp"
@@ -55,18 +58,25 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QColor>
+#include <QCursor>
 #include <QDate>
+#include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QEasingCurve>
 #include <QGestureEvent>
 #include <QGraphicsBlurEffect>
+#include <QInputDialog>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QScreen>
 #include <QStringBuilder>
+#include <QToolTip>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVariantAnimation>
 
 #include <algorithm>
@@ -80,8 +90,164 @@ namespace {
 constexpr size_t TOOLTIP_EMOTE_ENTRIES_LIMIT = 7;
 
 using namespace chatterino;
+using namespace chatterino::literals;
 
 constexpr int SCROLLBAR_PADDING = 8;
+
+QString formatHoverTimestamp(const MessagePtr &message)
+{
+    if (!message || !message->serverReceivedTime.isValid())
+    {
+        return {};
+    }
+
+    const auto local = message->serverReceivedTime.toLocalTime();
+    const auto value = local.date() == QDate::currentDate()
+                           ? local.time().toString("HH:mm:ss")
+                           : local.toString("yyyy-MM-dd HH:mm:ss");
+    return QString("Time: %1").arg(value);
+}
+
+QString appendTooltipTimestamp(const QString &text, const QString &timestamp)
+{
+    if (timestamp.isEmpty())
+    {
+        return text;
+    }
+    if (text.isEmpty())
+    {
+        return timestamp;
+    }
+    return text + "\n" + timestamp;
+}
+
+QString openEmoteReportBaseUrl()
+{
+    const auto value = qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_URL");
+    if (!value.isEmpty())
+    {
+        return value;
+    }
+    return u"https://openemote.com/report"_s;
+}
+
+bool openEmoteReportActionsEnabled()
+{
+    return getSettings()->openEmoteEnableReportActions;
+}
+
+QString openEmoteReportApiUrl()
+{
+    if (!getSettings()->openEmoteEnableApiReports)
+    {
+        return {};
+    }
+    return qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_API_URL");
+}
+
+QString openEmoteReportAuthToken()
+{
+    const auto explicitToken =
+        qEnvironmentVariable("CHATTERINO_OPENEMOTE_REPORT_TOKEN");
+    if (!explicitToken.isEmpty())
+    {
+        return explicitToken;
+    }
+
+    if (const auto account = getApp()->getAccounts()->twitch.getCurrent();
+        account)
+    {
+        return account->getOAuthToken();
+    }
+
+    return QString();
+}
+
+QJsonObject reportQueryToJson(const QUrlQuery &query)
+{
+    QJsonObject payload;
+    for (const auto &[key, value] : query.queryItems())
+    {
+        payload.insert(key, value);
+    }
+    payload.insert("client", "chatterino-openemote");
+    payload.insert("submitted_at",
+                   QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    return payload;
+}
+
+void openOpenEmoteReport(const QUrlQuery &query, QStringView okText,
+                         QStringView failText, QObject *caller)
+{
+    const auto apiUrl = openEmoteReportApiUrl();
+    if (!apiUrl.isEmpty())
+    {
+        auto request =
+            NetworkRequest(QUrl(apiUrl), NetworkRequestType::Post)
+                .caller(caller)
+                .json(reportQueryToJson(query))
+                .onSuccess([okText](const NetworkResult & /*result*/) {
+                    QToolTip::showText(QCursor::pos(), okText.toString());
+                })
+                .onError([failText](const NetworkResult & /*result*/) {
+                    QToolTip::showText(QCursor::pos(), failText.toString());
+                });
+
+        const auto authToken = openEmoteReportAuthToken();
+        if (!authToken.isEmpty())
+        {
+            request = std::move(request).header("Authorization",
+                                                "Bearer " + authToken);
+        }
+
+        std::move(request).execute();
+        return;
+    }
+
+    QUrl reportUrl(openEmoteReportBaseUrl());
+    if (!reportUrl.isValid())
+    {
+        return;
+    }
+
+    reportUrl.setQuery(query);
+    const auto opened = QDesktopServices::openUrl(reportUrl);
+    QToolTip::showText(QCursor::pos(),
+                       opened ? okText.toString() : failText.toString());
+}
+
+std::optional<QString> chooseReportReason(QWidget *parent, QStringView target)
+{
+    const QStringList reasons{
+        "spam",
+        "stolen",
+        "nsfw",
+        "forbidden",
+        "harassment",
+        "other",
+    };
+    bool ok = false;
+    auto selected = QInputDialog::getItem(parent, u"Report "_s % target,
+                                          "Reason", reasons, 0, false, &ok);
+    if (!ok || selected.isEmpty())
+    {
+        return std::nullopt;
+    }
+    return selected;
+}
+
+std::optional<QString> chooseReportNotes(QWidget *parent, QStringView target)
+{
+    bool ok = false;
+    auto notes =
+        QInputDialog::getText(parent, u"Report "_s % target, "Optional notes",
+                              QLineEdit::Normal, {}, &ok);
+    if (!ok)
+    {
+        return std::nullopt;
+    }
+    return notes;
+}
 
 void addEmoteContextMenuItems(QMenu *menu, const Emote &emote, QStringView kind)
 {
@@ -133,6 +299,46 @@ void addEmoteContextMenuItems(QMenu *menu, const Emote &emote, QStringView kind)
                             [url = emote.homePage] {
                                 QDesktopServices::openUrl(QUrl(url.string));
                             });
+    }
+
+    if (kind == u"emote" && openEmoteReportActionsEnabled())
+    {
+        menu->addSeparator();
+        menu->addAction("Report &emote", [emote, menu] {
+            auto reason = chooseReportReason(menu, u"emote"_s);
+            if (!reason)
+            {
+                return;
+            }
+
+            QUrlQuery query;
+            query.addQueryItem("target", "emote");
+            query.addQueryItem("reason", *reason);
+            if (*reason == "other")
+            {
+                if (auto notes = chooseReportNotes(menu, u"emote"_s);
+                    notes && !notes->isEmpty())
+                {
+                    query.addQueryItem("notes", *notes);
+                }
+            }
+            query.addQueryItem("name", emote.name.string);
+            if (!emote.id.string.isEmpty())
+            {
+                query.addQueryItem("id", emote.id.string);
+            }
+            if (!emote.homePage.string.isEmpty())
+            {
+                query.addQueryItem("source", emote.homePage.string);
+            }
+            if (auto image = emote.images.getImage1(); image && !image->isEmpty())
+            {
+                query.addQueryItem("image", image->url().string);
+            }
+            openOpenEmoteReport(query, u"Submitted emote report"_s,
+                                u"Failed to submit emote report"_s,
+                                menu);
+        });
     }
 }
 
@@ -2023,10 +2229,24 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
     const auto *emoteElement = dynamic_cast<const EmoteElement *>(element);
     const auto *layeredEmoteElement =
         dynamic_cast<const LayeredEmoteElement *>(element);
+    const auto *timestampElement =
+        dynamic_cast<const TimestampElement *>(element);
     bool isNotEmote = emoteElement == nullptr && layeredEmoteElement == nullptr;
+    const MessageElementFlags hoverFlags = element->getFlags();
+    const bool isHoverTimestampTextTarget =
+        timestampElement != nullptr &&
+        hoverFlags.hasNone({MessageElementFlag::ReplyButton,
+                           MessageElementFlag::RepliedMessage,
+                           MessageElementFlag::Username,
+                           MessageElementFlag::Badges});
+    const auto hoverTimestamp = isHoverTimestampTextTarget
+                                   ? formatHoverTimestamp(layout->getMessagePtr())
+                                   : QString{};
+    const bool suppressLinkInfoTooltip =
+        isLinkValid && isNotEmote && !getSettings()->linkInfoTooltip;
 
-    if (element->getTooltip().isEmpty() ||
-        (isLinkValid && isNotEmote && !getSettings()->linkInfoTooltip))
+    if ((element->getTooltip().isEmpty() && hoverTimestamp.isEmpty()) ||
+        (suppressLinkInfoTooltip && hoverTimestamp.isEmpty()))
     {
         this->tooltipWidget_->hide();
     }
@@ -2051,7 +2271,9 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
                     showThumbnail
                         ? emoteElement->getEmote()->images.getImage(3.0)
                         : nullptr,
-                    element->getTooltip(), getTooltipScale(scale)));
+                    appendTooltipTimestamp(element->getTooltip(),
+                                           hoverTimestamp),
+                    getTooltipScale(scale)));
             }
             else if (layeredEmoteElement)
             {
@@ -2087,7 +2309,9 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
                             entries.push_back(TooltipEntry::scaled(
                                 showThumbnail ? emote->images.getImage(3.0)
                                               : nullptr,
-                                emoteTooltips[i], getTooltipScale(scale)));
+                                appendTooltipTimestamp(emoteTooltips[i],
+                                                       hoverTimestamp),
+                                getTooltipScale(scale)));
                         }
                         else
                         {
@@ -2119,13 +2343,14 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
                     showThumbnail
                         ? badgeElement->getEmote()->images.getImage(3.0)
                         : nullptr,
-                    element->getTooltip(), getTooltipScale(scale)));
+                    appendTooltipTimestamp(element->getTooltip(),
+                                           hoverTimestamp),
+                    getTooltipScale(scale)));
             }
         }
         else if (auto *linkElement = dynamic_cast<LinkElement *>(element))
         {
-            auto thumbnailSize = getSettings()->thumbnailSize;
-            if (linkElement)
+            if (getSettings()->linkInfoTooltip)
             {
                 if (linkElement->linkInfo()->isPending())
                 {
@@ -2134,17 +2359,30 @@ void ChannelView::mouseMoveEvent(QMouseEvent *event)
                 }
                 this->setLinkInfoTooltip(linkElement->linkInfo());
             }
+            else
+            {
+                this->tooltipWidget_->setOne(TooltipEntry{
+                    .image = nullptr,
+                    .text = hoverTimestamp,
+                });
+            }
         }
         else
         {
             this->tooltipWidget_->setOne(TooltipEntry{
                 .image = nullptr,
-                .text = element->getTooltip(),
+                .text = appendTooltipTimestamp(element->getTooltip(),
+                                               hoverTimestamp),
             });
         }
 
+        const auto layoutToViewOffset = event->position() - relativePos;
+        const auto tooltipPos = this->mapToGlobal(
+            (layoutToViewOffset + hoverLayoutElement->getRect().bottomLeft() +
+             QPointF(4, 2))
+                .toPoint());
         this->tooltipWidget_->moveTo(
-            event->globalPosition().toPoint() + QPoint(16, 16),
+            tooltipPos,
             widgets::BoundsChecking::CursorPosition);
         this->tooltipWidget_->setWordWrap(isLinkValid);
         this->tooltipWidget_->show();
@@ -2614,6 +2852,9 @@ void ChannelView::addContextMenuItems(
 void ChannelView::addMessageContextMenuItems(QMenu *menu,
                                              const MessageLayoutPtr &layout)
 {
+    menu->addSection("Message");
+    const auto &messagePtr = layout->getMessagePtr();
+
     // Copy actions
     if (!this->selection_.isEmpty())
     {
@@ -2637,11 +2878,43 @@ void ChannelView::addMessageContextMenuItems(QMenu *menu,
 
         crossPlatformCopy(copyString);
     });
+    if (openEmoteReportActionsEnabled())
+    {
+        menu->addAction("Report &message", [messagePtr, this] {
+            auto reason = chooseReportReason(this, u"message"_s);
+            if (!reason)
+            {
+                return;
+            }
+
+            QUrlQuery query;
+            query.addQueryItem("target", "message");
+            query.addQueryItem("reason", *reason);
+            if (*reason == "other")
+            {
+                if (auto notes = chooseReportNotes(this, u"message"_s);
+                    notes && !notes->isEmpty())
+                {
+                    query.addQueryItem("notes", *notes);
+                }
+            }
+            if (!messagePtr->id.isEmpty())
+            {
+                query.addQueryItem("message_id", messagePtr->id);
+            }
+            if (!messagePtr->channelName.isEmpty())
+            {
+                query.addQueryItem("channel", messagePtr->channelName);
+            }
+            openOpenEmoteReport(query, u"Submitted message report"_s,
+                                u"Failed to submit message report"_s, this);
+        });
+    }
 
     // Only display reply option where it makes sense
     if (this->canReplyToMessages())
     {
-        const auto &messagePtr = layout->getMessagePtr();
+        menu->addSection("Reply");
         switch (messagePtr->isReplyable())
         {
             case Message::ReplyStatus::Replyable: {
@@ -2705,9 +2978,86 @@ void ChannelView::addMessageContextMenuItems(QMenu *menu,
         if (const auto &messagePtr = layout->getMessagePtr();
             messagePtr->replyThread != nullptr)
         {
-            menu->addAction("View &thread", [this, &messagePtr] {
-                this->showReplyThreadPopup(messagePtr);
-            });
+            if (getSettings()->openEmotePreferThreadDrawer)
+            {
+                menu->addAction("View thread (&drawer)",
+                                [this, &messagePtr] {
+                                    if (messagePtr->replyThread != nullptr &&
+                                        messagePtr->replyThread->root() !=
+                                            nullptr)
+                                    {
+                                        this->setInputReply(
+                                            messagePtr->replyThread->root());
+                                    }
+                                });
+                menu->addAction("Open thread &popout", [this, &messagePtr] {
+                    this->showReplyThreadPopup(messagePtr);
+                });
+                menu->addAction("&Collapse thread drawer", [this] {
+                    if (this->split_ != nullptr)
+                    {
+                        this->split_->setInputReply(nullptr);
+                    }
+                });
+            }
+            else
+            {
+                menu->addAction("View &thread", [this, &messagePtr] {
+                    this->showReplyThreadPopup(messagePtr);
+                });
+                menu->addAction("Open thread in &drawer",
+                                [this, &messagePtr] {
+                                    if (messagePtr->replyThread != nullptr &&
+                                        messagePtr->replyThread->root() !=
+                                            nullptr)
+                                    {
+                                        this->setInputReply(
+                                            messagePtr->replyThread->root());
+                                    }
+                                });
+            }
+            if (openEmoteReportActionsEnabled())
+            {
+                menu->addAction("Report t&hread", [messagePtr, this] {
+                    auto reason = chooseReportReason(this, u"thread"_s);
+                    if (!reason)
+                    {
+                        return;
+                    }
+
+                    QUrlQuery query;
+                    query.addQueryItem("target", "thread");
+                    query.addQueryItem("reason", *reason);
+                    if (*reason == "other")
+                    {
+                        if (auto notes = chooseReportNotes(this, u"thread"_s);
+                            notes && !notes->isEmpty())
+                        {
+                            query.addQueryItem("notes", *notes);
+                        }
+                    }
+                    if (!messagePtr->id.isEmpty())
+                    {
+                        query.addQueryItem("message_id", messagePtr->id);
+                    }
+                    if (!messagePtr->channelName.isEmpty())
+                    {
+                        query.addQueryItem("channel", messagePtr->channelName);
+                    }
+                    if (messagePtr->replyThread != nullptr)
+                    {
+                        const auto &root = messagePtr->replyThread->root();
+                        if (root != nullptr && !root->id.isEmpty())
+                        {
+                            query.addQueryItem("thread_root_message_id",
+                                               root->id);
+                        }
+                    }
+                    openOpenEmoteReport(query, u"Submitted thread report"_s,
+                                        u"Failed to submit thread report"_s,
+                                        this);
+                });
+            }
         }
     }
 
@@ -2749,7 +3099,7 @@ void ChannelView::addMessageContextMenuItems(QMenu *menu,
     if (!layout->getMessage()->id.isEmpty() && twitchChannel &&
         twitchChannel->hasModRights())
     {
-        menu->addSeparator();
+        menu->addSection("Moderation");
         auto *moderateAction = menu->addAction("Mo&derate");
         auto *moderateMenu = new QMenu(menu);
         moderateAction->setMenu(moderateMenu);
@@ -2769,6 +3119,7 @@ void ChannelView::addMessageContextMenuItems(QMenu *menu,
     bool isAutomod = this->channel()->getType() == Channel::Type::TwitchAutomod;
     if (isSearch || isMentions || isReplyOrUserCard || isAutomod)
     {
+        menu->addSection("Navigation");
         const auto &messagePtr = layout->getMessagePtr();
         menu->addAction("&Go to message", [this, &messagePtr, isSearch,
                                            isMentions, isReplyOrUserCard,
@@ -3183,7 +3534,19 @@ void ChannelView::handleLinkClick(QMouseEvent *event, const Link &link,
         }
         break;
         case Link::ViewThread: {
-            this->showReplyThreadPopup(layout->getMessagePtr());
+            const auto messagePtr = layout->getMessagePtr();
+            const bool forcePopup =
+                QApplication::keyboardModifiers().testFlag(
+                    Qt::ShiftModifier);
+            if (getSettings()->openEmotePreferThreadDrawer && !forcePopup &&
+                messagePtr != nullptr && messagePtr->replyThread != nullptr &&
+                messagePtr->replyThread->root() != nullptr)
+            {
+                this->setInputReply(messagePtr->replyThread->root());
+                break;
+            }
+
+            this->showReplyThreadPopup(messagePtr);
         }
         break;
         case Link::JumpToMessage: {

@@ -519,6 +519,8 @@ void GeneralPage::initLayout(GeneralPageView &layout)
             "When enabled, messages deleted by moderators will be hidden.")
         ->addTo(layout);
 
+    layout.addSubtitle("Timestamp behavior");
+
     layout.addDropdown<QString>(
         "Message timestamp format",
         {"Disable", "h:mm", "hh:mm", "h:mm a", "hh:mm a", "h:mm:ss", "hh:mm:ss",
@@ -537,8 +539,40 @@ void GeneralPage::initLayout(GeneralPageView &layout)
                                    : args.value;
         },
         true, "a = am/pm, zzz = milliseconds");
+
+    SettingWidget::checkbox("Show timestamps only on chat gaps",
+                            s.openEmoteTimestampGapsOnly)
+        ->setTooltip("Render timestamps only when the time difference from the "
+                     "previous visible message is large enough.")
+        ->conditionallyEnabledBy(s.showTimestamps)
+        ->addTo(layout);
+
+    SettingWidget::intInput("Timestamp gap threshold (minutes)",
+                            s.openEmoteTimestampGapMinutes,
+                            {
+                                .min = 1,
+                                .max = 400,
+                            })
+        ->setTooltip("Examples: 1, 4, 10, 40, 400.")
+        ->conditionallyEnabledBy(s.openEmoteTimestampGapsOnly)
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Always show timestamps for system messages",
+                            s.openEmoteTimestampAlwaysSystem)
+        ->setTooltip("Always show time for notices, moderation, and similar "
+                     "channel/system events.")
+        ->conditionallyEnabledBy(s.showTimestamps)
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("Always timestamp these usernames (CSV)",
+                            s.openEmoteTimestampAlwaysUsers)
+        ->setTooltip("Common bot accounts are prefilled. Example: "
+                     "nightbot,streamelements,moobot,fossabot")
+        ->conditionallyEnabledBy(s.showTimestamps)
+        ->addTo(layout);
+
     layout.addDropdown<int>(
-        "Limit message height",
+        "Max visible lines per message",
         {"Never", "2 lines", "3 lines", "4 lines", "5 lines"},
         s.collpseMessagesMinLines,
         [](auto val) {
@@ -1299,6 +1333,324 @@ void GeneralPage::initLayout(GeneralPageView &layout)
             ->addTo(layout);
     }
 
+    layout.addTitle("OpenEmote");
+    constexpr bool COMPACT_IDENTITY_CONTROLS_ENABLED = false;
+    layout.addDescription(
+        "OpenEmote settings prioritize stability-first defaults. "
+        "Advanced controls are staged behind validation before release.");
+
+    layout.addSubtitle("Safety & reporting");
+
+    SettingWidget::checkbox("Enable OpenEmote report actions",
+                            s.openEmoteEnableReportActions)
+        ->setTooltip("Show OpenEmote report actions in message, emote, and "
+                     "thread context menus.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Submit reports directly to API",
+                            s.openEmoteEnableApiReports)
+        ->setTooltip("If disabled, report actions open the configured report "
+                     "URL in your browser instead.")
+        ->conditionallyEnabledBy(s.openEmoteEnableReportActions)
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("OpenEmote OAuth handoff URL",
+                            s.openEmoteOauthBridgeUrl)
+        ->setTooltip("Used by \"Connect from OpenEmote (No paste)\" in login. "
+                     "Expected to be a local bridge endpoint.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Hide manual OAuth entry in streamer mode",
+                            s.openEmoteHideManualOauthInStreamerMode)
+        ->setTooltip("When streamer mode is enabled, hide paste/manual token "
+                     "entry to reduce accidental credential exposure.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Bot/compatibility mode (high-volume)",
+                            s.openEmoteBotCompatibilityMode)
+        ->setTooltip("Performance-first mode for bots/mods on fast chats. "
+                     "Disables OpenEmote-heavy avatar/decorator/corner-badge "
+                     "and thread activity rendering paths.")
+        ->addTo(layout);
+
+    layout.addSubtitle("Identity & chat layout");
+
+    SettingWidget::checkbox("Compact header layout (name above badges)",
+                            s.openEmoteCompactHeaderLayout)
+        ->setTooltip("Opt-in compact mode: show author in the header line and "
+                     "keep badges/message on the body line. Replies render as "
+                     "\"author -> target: preview\".")
+        ->addTo(layout);
+
+    if (!COMPACT_IDENTITY_CONTROLS_ENABLED)
+    {
+        layout.addDescription(
+            "Compact avatar identity controls are temporarily disabled while "
+            "stability work is in progress. Core OpenEmote features remain "
+            "available.");
+    }
+    else
+    {
+        auto *compactIdentityWidget =
+            SettingWidget::checkbox("Enable compact avatar identity",
+                                    s.openEmoteCompactAuthorAvatar)
+                ->setTooltip("Show author avatars in chat identity headers.");
+        compactIdentityWidget->addTo(layout);
+
+        SettingWidget::checkbox("Keep visible author names with compact avatars",
+                                s.openEmoteCompactAvatarKeepNames)
+            ->setTooltip("Recommended. Keeps usernames readable while still "
+                         "showing avatar identity.")
+            ->conditionallyEnabledBy(s.openEmoteCompactAuthorAvatar)
+            ->addTo(layout);
+
+        SettingWidget::checkbox("Enable avatar decorators",
+                                s.openEmoteAvatarDecorators)
+            ->setTooltip("Attach compact role decorators (for example mod/vip) "
+                         "next to avatar identities.")
+            ->conditionallyEnabledBy(s.openEmoteCompactAuthorAvatar)
+            ->addTo(layout);
+
+        SettingWidget::checkbox("Show role badges on avatar corners",
+                                s.openEmoteAvatarCornerBadges)
+            ->setTooltip("Render compact role markers on avatar corners. "
+                         "This reduces horizontal badge clutter.")
+            ->conditionallyEnabledBy(s.openEmoteCompactAuthorAvatar)
+            ->addTo(layout);
+
+        SettingWidget::checkbox("Use linear avatar badge stack (1x1x1x1)",
+                                s.openEmoteAvatarBadgeLinear)
+            ->setTooltip("When disabled, uses 2x2 corner badge grid.")
+            ->conditionallyEnabledBy(s.openEmoteAvatarCornerBadges)
+            ->addTo(layout);
+
+        SettingWidget::dropdown("Avatar badge anchor",
+                                s.openEmoteAvatarBadgeAnchor,
+                                {
+                                    {"Top", "top"},
+                                    {"Bottom", "bottom"},
+                                    {"Left", "left"},
+                                    {"Right", "right"},
+                                })
+            ->setTooltip("Chooses where avatar badge markers are anchored. In "
+                         "linear mode, left/right anchors stack vertically and "
+                         "top/bottom anchors stack horizontally.")
+            ->conditionallyEnabledBy(s.openEmoteAvatarCornerBadges)
+            ->addTo(layout);
+
+        SettingWidget::intInput(
+            "Avatar corner badge max", s.openEmoteAvatarCornerBadgeMax,
+            SettingWidget::IntInputParams{
+                .min = 1,
+                .max = 4,
+                .singleStep = 1,
+            })
+            ->setTooltip("Maximum markers to render per avatar (hard max 4).")
+            ->conditionallyEnabledBy(s.openEmoteAvatarCornerBadges)
+            ->addTo(layout);
+
+        SettingWidget::checkbox("Enable identity rail (avatar + badges)",
+                                s.openEmoteIdentityRailEnabled)
+            ->setTooltip("Reserve a fixed left-side identity block so message text "
+                         "starts at a stable x-position.")
+            ->conditionallyEnabledBy(s.openEmoteCompactAuthorAvatar)
+            ->addTo(layout);
+
+        SettingWidget::intInput(
+            "Identity rail width (px)", s.openEmoteIdentityRailWidth,
+            SettingWidget::IntInputParams{
+                .min = 48,
+                .max = 180,
+                .singleStep = 2,
+            })
+            ->setTooltip("Minimum left identity block width for compact mode.")
+            ->conditionallyEnabledBy(s.openEmoteIdentityRailEnabled)
+            ->addTo(layout);
+
+        SettingWidget::intInput(
+            "Identity rail min row height (px)",
+            s.openEmoteIdentityRailMinRowHeight,
+            SettingWidget::IntInputParams{
+                .min = 16,
+                .max = 40,
+                .singleStep = 1,
+            })
+            ->setTooltip("Increase compact row height slightly for badge legibility.")
+            ->conditionallyEnabledBy(s.openEmoteIdentityRailEnabled)
+            ->addTo(layout);
+    }
+
+    SettingWidget::checkbox("Prefer thread drawer over popout",
+                            s.openEmotePreferThreadDrawer)
+        ->setTooltip("Use inline reply drawer as the default thread interaction. "
+                     "Use Shift while opening a thread to force popout.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Show thread activity indicator",
+                            s.openEmoteShowThreadActivityIndicator)
+        ->setTooltip("Show a compact thread activity chip (for example T8) "
+                     "next to thread controls.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Use visual-width message limit",
+                            s.openEmoteUseVisualMessageLimit)
+        ->setTooltip("Count rendered message impact (including wide emotes and "
+                     "zero-width stacks) instead of only raw characters.")
+        ->addTo(layout);
+
+    SettingWidget::intInput(
+        "Visual message limit units", s.openEmoteVisualMessageLimit,
+        SettingWidget::IntInputParams{
+            .min = 100,
+            .max = 3000,
+            .singleStep = 10,
+        })
+        ->setTooltip("Higher values allow more visual width per message.")
+        ->conditionallyEnabledBy(s.openEmoteUseVisualMessageLimit)
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Cap emote and badge height to max row height",
+                            s.openEmoteMaxRowHeightEnabled)
+        ->setTooltip("Optional density control. Scales emotes and badge images "
+                     "down when they would exceed the configured row height.")
+        ->addTo(layout);
+
+    SettingWidget::intInput(
+        "Max chat row height (px)", s.openEmoteMaxRowHeight,
+        SettingWidget::IntInputParams{
+            .min = 18,
+            .max = 200,
+            .singleStep = 1,
+        })
+        ->setTooltip("Applies to rendered emote and badge image height.")
+        ->conditionallyEnabledBy(s.openEmoteMaxRowHeightEnabled)
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("Per-channel emote scale overrides",
+                            s.openEmoteChannelEmoteScaleOverrides)
+        ->setTooltip("Optional CSV map: channel=scale. Example: "
+                     "orbinyan=1.2,chatting=0.9")
+        ->addTo(layout);
+
+    layout.addSubtitle("Cross-channel emotes");
+
+    SettingWidget::checkbox("Enable cross-channel emotes (opt-in)",
+                            s.openEmoteEnableCrossChannelEmotes)
+        ->setTooltip("When enabled, OpenEmote can resolve BTTV/FFZ/7TV emotes "
+                     "from other channels you have open, using the policy "
+                     "below.")
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Allow only listed channels (allowlist mode)",
+                            s.openEmoteCrossChannelEmotesAllowlistMode)
+        ->setTooltip("If disabled: allow all source channels except blocked. "
+                     "If enabled: only channels in the allowlist are used.")
+        ->conditionallyEnabledBy(s.openEmoteEnableCrossChannelEmotes)
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("Allowed source channels (CSV)",
+                            s.openEmoteCrossChannelEmotesAllowChannels)
+        ->setTooltip("Comma-separated channel names. Example: "
+                     "orbinyan,jolly_mann")
+        ->conditionallyEnabledBy(s.openEmoteEnableCrossChannelEmotes)
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("Blocked source channels (CSV)",
+                            s.openEmoteCrossChannelEmotesBlockChannels)
+        ->setTooltip("Comma-separated channel names to always exclude, even "
+                     "outside allowlist mode.")
+        ->conditionallyEnabledBy(s.openEmoteEnableCrossChannelEmotes)
+        ->addTo(layout);
+
+    layout.addSubtitle("Custom badges");
+
+    SettingWidget::checkbox("Enable custom badge packs",
+                            s.openEmoteEnableCustomBadgePacks)
+        ->setTooltip("Allow OpenEmote custom badge tokens (including "
+                     "self-hosted packs) to render in chat.")
+        ->addTo(layout);
+
+    SettingWidget::lineEdit("Allowed custom badge pack IDs (CSV)",
+                            s.openEmoteCustomBadgePackAllowlist)
+        ->setTooltip("Comma-separated pack IDs to trust when untrusted packs "
+                     "are disabled. Example: openemote,orbinyan")
+        ->conditionallyEnabledBy(s.openEmoteEnableCustomBadgePacks)
+        ->addTo(layout);
+
+    SettingWidget::checkbox("Allow untrusted external badge packs",
+                            s.openEmoteAllowUntrustedBadgePacks)
+        ->setTooltip("Disabled by default. Enabling this will render custom "
+                     "badge packs from any source.")
+        ->conditionallyEnabledBy(s.openEmoteEnableCustomBadgePacks)
+        ->addTo(layout);
+
+    layout.addDescription("Self-host note: custom badge packs are controlled "
+                          "by the server operator. OpenEmote client maintainers "
+                          "are not responsible for third-party pack content.");
+
+    layout.addButton("Apply OpenEmote recommended defaults",
+                     [this] {
+                         auto *settings = getSettings();
+                         settings->alternateMessages = true;
+                         settings->showReplyButton = false;
+                         settings->openEmoteEnableReportActions = true;
+                         settings->openEmoteOauthBridgeUrl =
+                             "http://127.0.0.1:6137/openemote/oauth/pending";
+                         settings->openEmoteHideManualOauthInStreamerMode =
+                             true;
+                         settings->openEmoteBotCompatibilityMode = false;
+                         settings->openEmoteCompactAuthorAvatar = false;
+                         settings->openEmoteCompactAvatarKeepNames = true;
+                         settings->openEmoteAvatarDecorators = false;
+                         settings->openEmoteAvatarCornerBadges = false;
+                         settings->openEmoteAvatarBadgeLinear = false;
+                         settings->openEmoteAvatarBadgeLinearVertical = true;
+                         settings->openEmoteAvatarBadgeAnchor = "left";
+                         settings->openEmoteAvatarBadgeRightSide = false;
+                         settings->openEmoteAvatarCornerBadgeMax = 4;
+                         settings->openEmoteCompactHeaderLayout = true;
+                         settings->openEmoteIdentityRailEnabled = false;
+                         settings->openEmoteIdentityRailWidth = 72;
+                         settings->openEmoteIdentityRailMinRowHeight = 22;
+                         settings->openEmotePreferThreadDrawer = true;
+                         settings->openEmoteShowThreadActivityIndicator = true;
+                         settings->openEmoteTimestampGapsOnly = true;
+                         settings->openEmoteTimestampGapMinutes = 4;
+                         settings->openEmoteTimestampAlwaysSystem = true;
+                         settings->openEmoteTimestampAlwaysUsers =
+                             "nightbot,streamelements,moobot,fossabot";
+                         settings->openEmoteUseVisualMessageLimit = true;
+                         settings->openEmoteVisualMessageLimit = 500;
+                         settings->openEmoteMaxRowHeightEnabled = false;
+                         settings->openEmoteMaxRowHeight = 44;
+                         settings->openEmoteEnableCrossChannelEmotes = false;
+                         settings->openEmoteCrossChannelEmotesAllowlistMode =
+                             false;
+                         settings->openEmoteCrossChannelEmotesAllowChannels =
+                             "";
+                         settings->openEmoteCrossChannelEmotesBlockChannels =
+                             "";
+                         settings->openEmoteEnableCustomBadgePacks = false;
+                         settings->openEmoteAllowUntrustedBadgePacks = false;
+
+                         QMessageBox::information(
+                             this, "OpenEmote recommended defaults",
+                             "Applied recommended readability defaults:\n"
+                             "- alternating message backgrounds\n"
+                             "- reply button hidden by default\n"
+                             "- chat avatars disabled (user-card only)\n"
+                             "- drawer-first thread interaction + activity chip");
+                     });
+
+    layout.addButton("Show OpenEmote onboarding on next launch",
+                     [this] {
+                         getSettings()->openEmoteOnboardingShown = false;
+                         QMessageBox::information(
+                             this, "OpenEmote onboarding",
+                             "OpenEmote onboarding will show again the next "
+                             "time you start Chatterino.");
+                     });
+
     layout.addSubtitle("Miscellaneous");
 
     if (supportsIncognitoLinks())
@@ -1396,24 +1748,6 @@ void GeneralPage::initLayout(GeneralPageView &layout)
         s.autoCloseThreadPopup)
         ->addTo(layout);
 
-    SettingWidget::checkbox("Display 7TV Paints", s.displaySevenTVPaints)
-        ->addTo(layout);
-    SettingWidget::checkbox("Display 7TV Paint Shadows",
-                            s.displaySevenTVPaintShadows)
-        ->addTo(layout);
-    SettingWidget::checkbox("Use larger 7TV Paint Shadows",
-                            s.largeSevenTVPaintShadows)
-        ->setDescription(
-            "This aims to match the appearance of paints in the browser.")
-        ->addTo(layout);
-    {
-        auto cb = [] {
-            getApp()->getWindows()->invalidateChannelViewBuffers();
-        };
-        s.displaySevenTVPaints.connect(cb, false);
-        s.displaySevenTVPaintShadows.connect(cb, false);
-        s.largeSevenTVPaintShadows.connect(cb, false);
-    }
     SettingWidget::checkbox("Lowercase domains (anti-phishing)",
                             s.lowercaseDomains)
         ->setTooltip(

@@ -17,6 +17,8 @@
 #include "Test.hpp"
 
 #include <memory>
+#include <algorithm>
+#include <QTime>
 #include <vector>
 
 using namespace chatterino;
@@ -166,6 +168,361 @@ TEST_P(MessageLayoutContainerTest, RtlReordering)
 
     ASSERT_EQ(got, expected) << got;
     ASSERT_EQ(container.textDirection_, expectedDirection) << got;
+}
+
+TEST(MessageLayoutContainer, OpenEmoteTimestampRightClamp)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = true;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 420,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement user("orbinyan:", MessageElementFlag::Username, MessageColor{},
+                     FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        const auto *element =
+            container.getElementAt(QPointF(x, container.getHeight() / 2.0));
+        if (element != nullptr)
+        {
+            timestampElement = element;
+            break;
+        }
+    }
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_TRUE(timestampElement->getFlags().has(MessageElementFlag::Timestamp));
+}
+
+TEST(MessageLayoutContainer, OpenEmoteTimestampRightClampWithoutCompactIdentity)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = false;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 420,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement user("orbinyan:", MessageElementFlag::Username, MessageColor{},
+                     FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        const auto *element =
+            container.getElementAt(QPointF(x, container.getHeight() / 2.0));
+        if (element != nullptr)
+        {
+            timestampElement = element;
+            break;
+        }
+    }
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_TRUE(timestampElement->getFlags().has(MessageElementFlag::Timestamp));
+}
+
+TEST(MessageLayoutContainer, OpenEmoteTimestampRightClampWithLongHeader)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = false;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::ReplyButton,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 480,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement user("very_long_username_for_timestamp_layout_check:",
+                     MessageElementFlag::Username, MessageColor{},
+                     FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TextElement reply("↩", MessageElementFlag::ReplyButton, MessageColor{},
+                      FontStyle::ChatMedium);
+    reply.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    const auto y = container.getHeight() / 2.0;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        const auto *element = container.getElementAt(QPointF(x, y));
+        if (element != nullptr &&
+            element->getFlags().has(MessageElementFlag::Timestamp))
+        {
+            timestampElement = element;
+            break;
+        }
+    }
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_GE(timestampElement->getRect().right(), int(ctx.width) - 10);
+}
+
+TEST(MessageLayoutContainer, OpenEmoteTimestampRightClampWithReplyElement)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = false;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::ReplyButton,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 420,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement user("orbinyan:", MessageElementFlag::Username, MessageColor{},
+                     FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TextElement reply("↩", MessageElementFlag::ReplyButton, MessageColor{},
+                      FontStyle::ChatMedium);
+    reply.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        const auto *element =
+            container.getElementAt(QPointF(x, container.getHeight() / 2.0));
+        if (element != nullptr)
+        {
+            timestampElement = element;
+            break;
+        }
+    }
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_TRUE(timestampElement->getFlags().has(MessageElementFlag::Timestamp));
+}
+
+TEST(MessageLayoutContainer, OpenEmoteTimestampRightClampNarrowWidth)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = false;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::ReplyButton,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 300,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement user("longish_user_name:", MessageElementFlag::Username,
+                     MessageColor{}, FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TextElement reply("↩", MessageElementFlag::ReplyButton, MessageColor{},
+                      FontStyle::ChatMedium);
+    reply.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        for (int y = 0; y < container.getHeight(); y++)
+        {
+            const auto *element = container.getElementAt(QPointF(x, y));
+            if (element != nullptr &&
+                element->getFlags().has(MessageElementFlag::Timestamp))
+            {
+                timestampElement = element;
+                break;
+            }
+        }
+        if (timestampElement != nullptr)
+        {
+            break;
+        }
+    }
+
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_GE(timestampElement->getRect().right(), int(ctx.width) - 10);
+}
+
+TEST(MessageLayoutContainer, OpenEmoteBadgesRenderBeforeUsername)
+{
+    MockApplication mockApplication;
+    getSettings()->openEmoteCompactAuthorAvatar = false;
+
+    MessageLayoutContainer container;
+    MessageLayoutContext ctx{
+        .messageColors = {},
+        .flags =
+            {
+                MessageElementFlag::Text,
+                MessageElementFlag::Username,
+                MessageElementFlag::BadgeVanity,
+                MessageElementFlag::Timestamp,
+            },
+        .width = 520,
+        .scale = 1.0F,
+        .imageScale = 1.0F,
+    };
+    container.beginLayout(ctx.width, ctx.scale, ctx.imageScale,
+                          {MessageFlag::Collapsed});
+
+    TextElement badgeVip("VIP", MessageElementFlag::BadgeVanity, MessageColor{},
+                         FontStyle::ChatMediumSmall);
+    badgeVip.addToContainer(container, ctx);
+
+    TextElement badgeDev("DEV", MessageElementFlag::BadgeVanity, MessageColor{},
+                         FontStyle::ChatMediumSmall);
+    badgeDev.addToContainer(container, ctx);
+
+    TextElement user("orbinyan:", MessageElementFlag::Username, MessageColor{},
+                     FontStyle::ChatMediumBold);
+    user.addToContainer(container, ctx);
+
+    TextElement text("hello", MessageElementFlag::Text, MessageColor{},
+                     FontStyle::ChatMedium);
+    text.addToContainer(container, ctx);
+
+    TimestampElement timestamp(QTime(12, 34, 56));
+    timestamp.addToContainer(container, ctx);
+
+    container.endLayout();
+    ASSERT_GT(container.getHeight(), 0);
+
+    const MessageLayoutElement *usernameElement = nullptr;
+    for (int y = 0; y < int(container.getHeight()) && usernameElement == nullptr;
+         y++)
+    {
+        for (int x = 0; x < int(ctx.width); x++)
+        {
+            const auto *element = container.getElementAt(QPointF(x, y));
+            if (element != nullptr &&
+                element->getFlags().has(MessageElementFlag::Username))
+            {
+                usernameElement = element;
+                break;
+            }
+        }
+    }
+
+    ASSERT_NE(usernameElement, nullptr);
+    qreal rightMostBadge = -1;
+    for (int y = 0; y < int(container.getHeight()); y++)
+    {
+        for (int x = 0; x < int(usernameElement->getRect().x()); x++)
+        {
+            const auto *element = container.getElementAt(QPointF(x, y));
+            if (element != nullptr &&
+                element->getFlags().has(MessageElementFlag::BadgeVanity))
+            {
+                rightMostBadge = std::max(rightMostBadge, element->getRect().right());
+            }
+        }
+    }
+    ASSERT_GE(rightMostBadge, 0);
+
+    const MessageLayoutElement *timestampElement = nullptr;
+    for (int x = int(ctx.width) - 1; x >= 0; x--)
+    {
+        for (int y = 0; y < int(container.getHeight()); y++)
+        {
+            const auto *element = container.getElementAt(QPointF(x, y));
+            if (element != nullptr &&
+                element->getFlags().has(MessageElementFlag::Timestamp))
+            {
+                timestampElement = element;
+                break;
+            }
+        }
+        if (timestampElement != nullptr)
+        {
+            break;
+        }
+    }
+
+    ASSERT_NE(timestampElement, nullptr);
+    EXPECT_LT(rightMostBadge, usernameElement->getRect().x());
+    EXPECT_GE(timestampElement->getRect().right(), int(ctx.width) - 10);
 }
 
 INSTANTIATE_TEST_SUITE_P(

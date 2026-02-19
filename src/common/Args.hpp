@@ -8,6 +8,7 @@
 #include "common/WindowDescriptors.hpp"
 
 #include <QApplication>
+#include <QUrl>
 
 #include <optional>
 
@@ -65,6 +66,7 @@ public:
     std::optional<WindowLayout> customChannelLayout;
     std::optional<Channel> activateChannel;
     std::optional<QString> initialLogin;
+    std::optional<QUrl> openEmoteIntegrationUrl;
     bool verbose{};
     bool safeMode{};
 

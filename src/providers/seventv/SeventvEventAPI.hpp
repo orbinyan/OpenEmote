@@ -4,10 +4,14 @@
 
 #pragma once
 
+#include "messages/Emote.hpp"
+
 #include <pajlada/signals/signal.hpp>
 #include <QString>
 
+#include <chrono>
 #include <memory>
+#include <utility>
 
 namespace chatterino {
 
@@ -23,8 +27,12 @@ struct UserConnectionUpdateDispatch;
 }  // namespace seventv::eventapi
 
 class SeventvBadges;
+class EmoteMap;
 
 class SeventvEventAPIPrivate;
+
+using PersonalEmoteSet = std::pair<QString, std::shared_ptr<const EmoteMap>>;
+
 class SeventvEventAPI
 {
     template <typename T>
@@ -42,7 +50,7 @@ public:
         Signal<const seventv::eventapi::EmoteRemoveDispatch &> emoteRemoved;
         Signal<const seventv::eventapi::UserConnectionUpdateDispatch &>
             userUpdated;
-        Signal<const std::pair<QString, std::shared_ptr<const EmoteMap>> &>
+        Signal<const PersonalEmoteSet &>
             personalEmoteSetAdded;
     } signals_;  // NOLINT(readability-identifier-naming)
 

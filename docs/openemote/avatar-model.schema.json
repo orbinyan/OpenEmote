@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openemote.com/schemas/avatar-model.schema.json",
+  "title": "OpenEmote Avatar Model",
+  "description": "Portable avatar model payload used by OpenEmote usercards and interaction hooks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "model_id",
+    "rig",
+    "base_size",
+    "skin"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 96,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "rig": {
+      "type": "string",
+      "enum": [
+        "openemote.v1.humanoid"
+      ]
+    },
+    "base_size": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "width",
+        "height"
+      ],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 512
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 512
+        }
+      }
+    },
+    "skin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "preview_url": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "idle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asset_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "fps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "loop": {
+          "type": "boolean"
+        }
+      }
+    },
+    "interactions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shake": {
+          "$ref": "#/$defs/interaction"
+        },
+        "hug": {
+          "$ref": "#/$defs/interaction"
+        },
+        "wave": {
+          "$ref": "#/$defs/interaction"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asset_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 30000
+        }
+      }
+    }
+  }
+}

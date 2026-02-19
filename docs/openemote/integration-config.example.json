@@ -1,0 +1,23 @@
+{
+  "version": "1.0.0",
+  "kind": "openemote.integration-pack",
+  "imageUploader": {
+    "Version": "1.0.0",
+    "RequestMethod": "POST",
+    "RequestURL": "https://ayanami.app/api/upload",
+    "Body": "MultipartFormData",
+    "FileFormName": "file",
+    "URL": "{url}",
+    "DeletionURL": "{delete_url}",
+    "Headers": {
+      "Authorization": "Bearer ${secret:ayanami_bearer}"
+    }
+  },
+  "oauth": {
+    "bridgeUrl": "http://127.0.0.1:6137/openemote/oauth/pending",
+    "hideManualInStreamerMode": true
+  },
+  "secrets": {
+    "ayanami_bearer": "<paste-bearer-token-here>"
+  }
+}

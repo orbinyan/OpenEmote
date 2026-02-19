@@ -62,6 +62,10 @@ set(test_SOURCES
     ${CMAKE_CURRENT_LIST_DIR}/src/FunctionRef.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/InputHighlighter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/BalancedResolverResults.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/WidgetHelpers.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/OpenEmoteImport.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/OpenEmoteSecureGroupWhisper.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/src/OpenEmoteApiClient.cpp
     ${CMAKE_CURRENT_LIST_DIR}/src/CrashHandler.cpp
 
     ${CMAKE_CURRENT_LIST_DIR}/src/lib/Snapshot.cpp

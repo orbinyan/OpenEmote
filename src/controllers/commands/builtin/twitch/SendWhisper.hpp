@@ -15,5 +15,6 @@ struct CommandContext;
 namespace chatterino::commands {
 
 QString sendWhisper(const CommandContext &ctx);
+QString sendGroupWhisper(const CommandContext &ctx);
 
 }  // namespace chatterino::commands

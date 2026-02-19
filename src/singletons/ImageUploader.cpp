@@ -6,6 +6,7 @@
 
 #include "Application.hpp"
 #include "common/Channel.hpp"
+#include "common/Credentials.hpp"
 #include "common/Env.hpp"
 #include "common/network/NetworkRequest.hpp"
 #include "common/network/NetworkResult.hpp"
@@ -18,12 +19,14 @@
 #include "widgets/helper/ResizingTextEdit.hpp"
 
 #include <QBuffer>
+#include <QApplication>
 #include <QHttpMultiPart>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMimeDatabase>
 #include <QMutex>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSaveFile>
 
 #include <utility>
@@ -32,6 +35,8 @@ namespace {
 
 // Delay between uploads in milliseconds
 constexpr int UPLOAD_DELAY = 2000;
+constexpr QStringView IMAGE_UPLOADER_SECRET_PROVIDER = u"openemote";
+constexpr QStringView IMAGE_UPLOADER_SECRET_NAME = u"imageUploaderBearer";
 
 std::optional<QByteArray> convertToPng(const QImage &image)
 {
@@ -45,6 +50,56 @@ std::optional<QByteArray> convertToPng(const QImage &image)
     }
 
     return std::nullopt;
+}
+
+QString sanitizeImageUploaderHeadersWithKeyring(const QString &headers)
+{
+    static const QRegularExpression authRegex(
+        R"((^|;)\s*Authorization\s*:\s*Bearer\s+([^;{}]+)\s*(;|$))",
+        QRegularExpression::CaseInsensitiveOption);
+
+    const auto match = authRegex.match(headers);
+    if (!match.hasMatch())
+    {
+        return headers;
+    }
+
+    const auto token = match.captured(2).trimmed();
+    if (token.isEmpty())
+    {
+        return headers;
+    }
+
+    chatterino::Credentials::instance().set(
+        IMAGE_UPLOADER_SECRET_PROVIDER.toString(),
+        IMAGE_UPLOADER_SECRET_NAME.toString(), token);
+
+    auto sanitized = headers;
+    const auto replacement = match.captured(1) +
+                             "Authorization: Bearer {secret:openemote:imageUploaderBearer}" +
+                             match.captured(3);
+    sanitized.replace(match.capturedStart(0), match.capturedLength(0),
+                      replacement);
+    if (sanitized.endsWith(';'))
+    {
+        sanitized.chop(1);
+    }
+    return sanitized;
+}
+
+bool headersNeedKeyringSecretResolution(const QString &headers)
+{
+    return headers.contains("{secret:openemote:imageUploaderBearer}",
+                            Qt::CaseInsensitive);
+}
+
+QString resolveHeadersWithKeyringSecret(const QString &headers,
+                                        const QString &secret)
+{
+    auto resolved = headers;
+    resolved.replace("{secret:openemote:imageUploaderBearer}", secret,
+                     Qt::CaseInsensitive);
+    return resolved;
 }
 
 }  // namespace
@@ -167,36 +222,77 @@ void ImageUploader::sendImageUploadRequest(RawImageData imageData,
         getSettings()->imageUploaderFormField.getValue().isEmpty()
             ? getSettings()->imageUploaderFormField.getDefaultValue()
             : getSettings()->imageUploaderFormField);
-    auto extraHeaders =
-        parseHeaderList(getSettings()->imageUploaderHeaders.getValue());
+    auto headersValue = getSettings()->imageUploaderHeaders.getValue();
+    const auto sanitizedHeaders = sanitizeImageUploaderHeadersWithKeyring(
+        headersValue);
+    if (sanitizedHeaders != headersValue)
+    {
+        getSettings()->imageUploaderHeaders = sanitizedHeaders;
+        headersValue = sanitizedHeaders;
+    }
     QString originalFilePath = imageData.filePath;
 
-    QHttpMultiPart *payload = new QHttpMultiPart(QHttpMultiPart::FormDataType);
-    QHttpPart part = QHttpPart();
-    part.setBody(imageData.data);
-    part.setHeader(QNetworkRequest::ContentTypeHeader,
-                   QString("image/%1").arg(imageData.format));
-    part.setHeader(QNetworkRequest::ContentLengthHeader,
-                   QVariant(imageData.data.length()));
-    part.setHeader(QNetworkRequest::ContentDispositionHeader,
-                   QString(R"(form-data; name="%1"; filename="control_v.%2")")
-                       .arg(formField)
-                       .arg(imageData.format));
-    payload->append(part);
+    const auto sendWithHeaders = [this, url, formField, originalFilePath,
+                                  channel, textEdit, imageData](
+                                     const QString &headers) {
+        auto extraHeaders = parseHeaderList(headers);
 
-    NetworkRequest(url, NetworkRequestType::Post)
-        .headerList(extraHeaders)
-        .multiPart(payload)
-        .onSuccess(
-            [textEdit, channel, originalFilePath, this](NetworkResult result) {
+        QHttpMultiPart *payload =
+            new QHttpMultiPart(QHttpMultiPart::FormDataType);
+        QHttpPart part = QHttpPart();
+        part.setBody(imageData.data);
+        part.setHeader(QNetworkRequest::ContentTypeHeader,
+                       QString("image/%1").arg(imageData.format));
+        part.setHeader(QNetworkRequest::ContentLengthHeader,
+                       QVariant(imageData.data.length()));
+        part.setHeader(
+            QNetworkRequest::ContentDispositionHeader,
+            QString(R"(form-data; name="%1"; filename="control_v.%2")")
+                .arg(formField)
+                .arg(imageData.format));
+        payload->append(part);
+
+        NetworkRequest(url, NetworkRequestType::Post)
+            .headerList(extraHeaders)
+            .multiPart(payload)
+            .onSuccess([textEdit, channel, originalFilePath,
+                        this](NetworkResult result) {
                 this->handleSuccessfulUpload(result, originalFilePath, channel,
                                              textEdit);
             })
-        .onError([channel, this](NetworkResult result) -> bool {
-            this->handleFailedUpload(result, channel);
-            return true;
-        })
-        .execute();
+            .onError([channel, this](NetworkResult result) {
+                this->handleFailedUpload(result, channel);
+            })
+            .execute();
+    };
+
+    if (!headersNeedKeyringSecretResolution(headersValue))
+    {
+        sendWithHeaders(headersValue);
+        return;
+    }
+
+    Credentials::instance().get(
+        IMAGE_UPLOADER_SECRET_PROVIDER.toString(),
+        IMAGE_UPLOADER_SECRET_NAME.toString(), QApplication::instance(),
+        [this, channel, textEdit, headersValue, sendWithHeaders](
+            const QString &secret) {
+            if (secret.trimmed().isEmpty())
+            {
+                channel->addSystemMessage(
+                    "Image uploader authorization secret is missing. "
+                    "Re-apply integration settings.");
+                while (!this->uploadQueue_.empty())
+                {
+                    this->uploadQueue_.pop();
+                }
+                this->uploadMutex_.unlock();
+                return;
+            }
+
+            auto resolved = resolveHeadersWithKeyringSecret(headersValue, secret);
+            sendWithHeaders(resolved);
+        });
 }
 
 void ImageUploader::handleFailedUpload(const NetworkResult &result,
