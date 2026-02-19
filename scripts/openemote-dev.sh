@@ -62,13 +62,28 @@ find_test_binary() {
 }
 
 build_cmd() {
+  # C++ builds can spike memory hard (and on this host we've seen OOM kills in cc1plus).
+  # Default to a conservative parallelism unless the operator overrides it.
+  local jobs
+  jobs="${OPENEMOTE_BUILD_JOBS:-${CMAKE_BUILD_PARALLEL_LEVEL:-}}"
+  if [[ -z "${jobs}" ]]; then
+    jobs="$(nproc)"
+  fi
+  # Clamp by default to avoid compiler OOM when lots of heavyweight TUs build at once.
+  # Override by setting OPENEMOTE_BUILD_JOBS explicitly.
+  if [[ -z "${OPENEMOTE_BUILD_JOBS:-}" ]]; then
+    if [[ "${jobs}" -gt 8 ]]; then
+      jobs=8
+    fi
+  fi
+
   if command -v nix >/dev/null 2>&1; then
     nix --extra-experimental-features 'nix-command flakes' develop -c cmake --preset release
-    nix --extra-experimental-features 'nix-command flakes' develop -c cmake --build --preset release -j"$(nproc)"
+    nix --extra-experimental-features 'nix-command flakes' develop -c cmake --build --preset release -j"${jobs}"
     return 0
   fi
   cmake --preset release
-  cmake --build --preset release -j"$(nproc)"
+  cmake --build --preset release -j"${jobs}"
 }
 
 cmd="${1:-run}"
@@ -108,6 +123,8 @@ case "${cmd}" in
   env)
     printf 'ROOT=%s\n' "${ROOT}"
     printf 'BUILD_DIRS=%s\n' "${BUILD_DIRS[*]}"
+    printf 'OPENEMOTE_BUILD_JOBS=%s\n' "${OPENEMOTE_BUILD_JOBS:-}"
+    printf 'CMAKE_BUILD_PARALLEL_LEVEL=%s\n' "${CMAKE_BUILD_PARALLEL_LEVEL:-}"
     ;;
   *)
     cat <<'USAGE'
@@ -120,4 +137,3 @@ USAGE
     exit 2
     ;;
 esac
-
