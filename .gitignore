@@ -128,3 +128,7 @@ aqtinstall.log
 
 # Local automation/ops artifacts (not part of the public repo).
 .overmind/
+
+# One-off history rewrite scripts (should not be committed)
+.git-filter-repo-*.py
+.commit-callback-body.py
