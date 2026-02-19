@@ -125,3 +125,6 @@ aqtinstall.log
 
 # sccache (CI)
 .sccache
+
+# Local automation/ops artifacts (not part of the public repo).
+.overmind/
