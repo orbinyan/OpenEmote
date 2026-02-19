@@ -921,7 +921,10 @@ void NotebookTab::paintEvent(QPaintEvent *)
     painter.fillRect(bgRect, tabBackground);
 
     // draw color indicator line
-    auto lineThickness = ceil((this->selected_ ? 2.f : 1.f) * scale);
+    const bool emphasizedLine = this->selected_ ||
+                                this->highlightState_ == HighlightState::Highlighted ||
+                                this->highlightState_ == HighlightState::NewMessage;
+    auto lineThickness = ceil((emphasizedLine ? 2.f : 1.f) * scale);
     auto lineColor = this->mouseOver_ ? colors.line.hover
                                       : (windowFocused ? colors.line.regular
                                                        : colors.line.unfocused);
@@ -969,9 +972,9 @@ void NotebookTab::paintEvent(QPaintEvent *)
         b.setStyle(Qt::SolidPattern);
         painter.setBrush(b);
 
-        auto x = this->width() - (7 * scale);
-        auto y = 4 * scale;
-        auto diameter = 4 * scale;
+        auto diameter = std::max(4, int(std::ceil(5 * scale)));
+        auto x = this->width() - diameter - int(6 * scale);
+        auto y = std::max(0, int((this->height() - diameter) / 2));
         QRect liveIndicatorRect(x, y, diameter, diameter);
         translateRectForLocation(liveIndicatorRect, this->tabLocation_,
                                  this->selected_ ? 0 : -1);
