@@ -1,8 +1,26 @@
-# Chatterino code guidelines
+# OpenEmote code guidelines
 
-This is a set of guidelines for contributing to Chatterino. The goal is to teach programmers without a C++ background (java/python/etc.), people who haven't used Qt, or otherwise have different experience, the idioms of the codebase. Thus we will focus on those which are different from those other environments. There are extra guidelines available [here](https://hackmd.io/@fourtf/chatterino-pendantic-guidelines) but they are considered as extras and not as important.
+OpenEmote is a chat client based on Chatterino. These guidelines are adapted from
+the upstream project and describe the existing conventions in this codebase.
 
-### General (non-code related) guidelines for contributing to Chatterino
+The goal is to teach programmers without a C++ background (java/python/etc.),
+people who haven't used Qt, or otherwise have different experience, the idioms
+of the codebase. Thus we will focus on those which are different from those
+other environments.
+
+There are extra upstream guidelines available at
+https://hackmd.io/@fourtf/chatterino-pendantic-guidelines but they are
+considered optional.
+
+## OpenEmote workflow
+
+- Base branch: `dev` (feature branches should PR into `dev`)
+- Release/stable branch: `main` (protected)
+- Keep PRs small and focused; include screenshots for UI changes where possible.
+- If a change is OpenEmote-specific, consider adding a short note in
+  `docs/openemote/CONTRIBUTING_NOTES.md` when it affects contributor workflow.
+
+### General (non-code related) guidelines for contributing
 
 - Make a specific branch for your pull request instead of using the master, main, or mainline branch. This will prevent future problems with updating your branch after your PR is merged.
 

@@ -6,6 +6,14 @@ OpenEmote is a fast, Twitch-first chat client based on Chatterino.
 
 [![Build](https://github.com/orbinyan/OpenEmote/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/orbinyan/OpenEmote/actions/workflows/build.yml)
 
+## Upstream
+
+This repository is intentionally not a GitHub "fork" object. We track upstream
+work from:
+
+- Chatterino: https://github.com/Chatterino/chatterino2
+- SevenTV: https://github.com/SevenTV/chatterino7
+
 ## Docs
 
 - [Open core policy](docs/openemote/OPEN_CORE_POLICY.md)
@@ -15,6 +23,7 @@ OpenEmote is a fast, Twitch-first chat client based on Chatterino.
 - [Testing notes](docs/openemote-testing.md)
 - [Self-hosted quickstart](docs/openemote/self-hosted-quickstart.md)
 - [Contributor notes for OpenEmote maintainers](docs/openemote/CONTRIBUTING_NOTES.md)
+ - [Contributing](CONTRIBUTING.md)
 
 ## Download
 
